@@ -2,7 +2,7 @@ import io
 import json
 import unittest
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from bomcheck.ai import CompatibleAI, Proposal, analyze, apply_proposals, validate_decisions, normalized_value
 from bomcheck.checker import check, identity
@@ -119,17 +119,32 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(payload['bom'][0]['footprint'], 'R0603')
         self.assertNotIn('token', json.dumps(payload))
 
-    def test_ai_cannot_override_locked_rows_even_if_response_valid(self):
-        class Inventory:
-            def list(self, *args, **kwargs):
-                return list(CATALOG.values())
-            def available(self, pk):
-                return Decimal(10)
+    def test_associated_rows_are_not_sent_to_ai_or_inventory(self):
+        inventory = MagicMock()
         client = CompatibleAI('http://localhost:1234/v1', 'model')
-        decision = {'rows': [{'row_id': 0, 'action': 'exclude', 'part_id': None, 'confidence': 1, 'reason': 'Ignore lock'}]}
-        with patch.object(client, 'complete', return_value=decision):
-            with self.assertRaises(ValueError):
-                analyze([Line('R1', '10k', 'R0603', 1, {'IPN': 'P1'})], Inventory(), {}, client)
+        with patch.object(client, 'complete') as completion:
+            self.assertEqual(analyze([Line('R1', '10k', 'R0603', 1, {'IPN': 'P1'})], inventory, {}, client), ([], {}))
+            completion.assert_not_called()
+            inventory.list.assert_not_called()
+
+    def test_only_unmapped_rows_sent_with_original_ids_across_batches(self):
+        inventory = MagicMock()
+        inventory.list.return_value = list(CATALOG.values())
+        inventory.available.return_value = Decimal(10)
+        client = MagicMock()
+        lines = [row(f'R{i}', str(i)) for i in range(9)]
+        lines[0].fields['IPN'] = 'P1'
+        config = {'mappings': [{'value': '2', 'footprint': 'R0603', 'part_id': 17}]}
+        batches = []
+        def respond(payload):
+            ids = [r['row_id'] for r in payload['bom']]
+            batches.append(ids)
+            return {'rows': [{'row_id': i, 'action': 'keep', 'part_id': None,
+                              'confidence': 1, 'reason': 'Unresolved'} for i in ids]}
+        client.complete.side_effect = respond
+        proposals, _ = analyze(lines, inventory, config, client, exclusions={4: 'Logo'})
+        self.assertEqual(batches, [[1, 3, 5], [6, 7, 8]])
+        self.assertEqual([p.row_id for p in proposals], [1, 3, 5, 6, 7, 8])
 
 
 if __name__ == '__main__':

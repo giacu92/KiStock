@@ -200,14 +200,28 @@ class CheckerDialog(wx.Dialog):
         self.build_button.Disable()
         if self.credential_error:
             self.status.SetLabel(self.credential_error + ' Enter the token again and save settings.')
+        else:
+            self.status.SetLabel('Saved associations restored. Availability has not been checked yet.')
+        if self.inventory_token:
+            wx.CallAfter(self.refresh_on_open)
+
+    def refresh_on_open(self):
+        if not self.closed and not self.busy:
+            self.on_check(automatic=True)
 
     def paint_rows(self):
         self.table.DeleteAllItems()
         for i, line in enumerate(self.lines):
             result = self.results[i] if self.results else None
-            status = result.status if result else 'NOT_CHECKED'
+            association = identity(line, self.config)
+            status = result.status if result else ('ASSOCIATED' if association else 'UNMAPPED')
             required = result.required if result else line.quantity * self.boards.GetValue()
             pick = '; '.join(f'{label(self.parts[pk])}: {qty}' for pk, qty in result.used.items()) if result else ''
+            if not result and association:
+                kind, code = association
+                saved = next((m.get('part_label') for m in self.config.get('mappings', [])
+                              if m['value'] == line.value and m['footprint'] == line.footprint), '')
+                pick = (saved + ' | ' if saved else '') + f'{kind}: {code} (availability pending)'
             if result and not pick and result.primary:
                 pick = label(result.primary)
             values = [status, line.refs, line.value, line.footprint, required,
@@ -244,7 +258,9 @@ class CheckerDialog(wx.Dialog):
             for service, url, remember in slots:
                 save_secret(self.settings_file, credential_key(service, url), keys[service] if remember else '')
             save_settings(self.settings_file, config)
-            if config['url'] != self.config['url'] or config.get('related_as_equivalents') != self.config.get('related_as_equivalents') or keys['inventree'] != self.inventory_token:
+            refresh = config['url'] != self.config['url'] or config.get('related_as_equivalents') != self.config.get('related_as_equivalents') or keys['inventree'] != self.inventory_token
+            self.config = config
+            if refresh:
                 self.results, self.exclusions = None, {}
                 self.export.Disable()
                 self.build_button.Disable()
@@ -253,6 +269,8 @@ class CheckerDialog(wx.Dialog):
             self.inventory_token, self.ai_key = keys['inventree'], keys['ai']
             self.mouser_key, self.mouser_search_key = keys['mouser'], keys['mouser-search']
             self.status.SetLabel('Settings saved. Connections and credentials are configured under Settings.')
+            if refresh and self.inventory_token:
+                wx.CallAfter(self.refresh_on_open)
             return True
         except Exception as error:
             wx.MessageBox(str(error), 'Cannot save settings', wx.OK | wx.ICON_ERROR)
@@ -274,8 +292,8 @@ class CheckerDialog(wx.Dialog):
         self.export.Enable(not busy and self.results is not None)
         self.build_button.Enable(not busy and bool(self.results) and all(r.status in ('OK', 'OK_EQUIVALENT', 'EXCLUDED_AI') for r in self.results))
 
-    def on_check(self, event=None):
-        if self.busy:
+    def on_check(self, event=None, automatic=False):
+        if self.closed or self.busy:
             return
         try:
             if not self.lines:
@@ -284,7 +302,10 @@ class CheckerDialog(wx.Dialog):
             client = self.client(config)
             self.persist(config)
         except Exception as error:
-            wx.MessageBox(str(error), 'Cannot start check', wx.OK | wx.ICON_ERROR)
+            if automatic:
+                self.status.SetLabel('Automatic availability check failed: ' + str(error))
+            else:
+                wx.MessageBox(str(error), 'Cannot start check', wx.OK | wx.ICON_ERROR)
             return
         boards = self.boards.GetValue()
         self.results = None
@@ -295,9 +316,10 @@ class CheckerDialog(wx.Dialog):
         self.status.SetLabel(f'Checking {len(self.lines)} BOM groups against InvenTree…')
         def done(value, error):
             if error:
-                self.status.SetLabel('Check failed. No current availability results.')
+                self.status.SetLabel('Availability check failed; saved associations remain. ' + error)
                 self.set_busy(False)
-                wx.MessageBox(error, 'InvenTree request failed', wx.OK | wx.ICON_ERROR)
+                if not automatic:
+                    wx.MessageBox(error, 'InvenTree request failed', wx.OK | wx.ICON_ERROR)
                 return
             self.results, self.parts, self.stock = value
             self.checked_boards = boards
@@ -327,7 +349,9 @@ class CheckerDialog(wx.Dialog):
                 self.build_button.Disable()
                 self.details.SetValue('')
                 self.paint_rows()
-                self.status.SetLabel('BOM loaded. Run Check availability.')
+                self.status.SetLabel('BOM loaded. Saved associations restored; availability pending.')
+                if self.inventory_token:
+                    self.on_check(automatic=True)
             except Exception as error:
                 wx.MessageBox(str(error), 'Cannot import BOM', wx.OK | wx.ICON_ERROR)
 
@@ -377,6 +401,9 @@ class CheckerDialog(wx.Dialog):
     def on_ai(self, event=None):
         if self.busy:
             return
+        if not any(not identity(line, self.config) and i not in self.exclusions for i, line in enumerate(self.lines)):
+            self.status.SetLabel('No unassociated rows to review. Existing associations and exclusions were kept.')
+            return
         if not self.config.get('ai', {}).get('base_url') and not self.on_ai_settings():
             return
         try:
@@ -393,9 +420,9 @@ class CheckerDialog(wx.Dialog):
             wx.MessageBox(str(error), 'Cannot start AI Assist', wx.OK | wx.ICON_ERROR)
             return
         self.set_busy(True)
-        self.status.SetLabel('AI Assist is reviewing BOM and inventory metadata. No changes have been applied.')
+        self.status.SetLabel('AI Assist is reviewing unassociated rows only. Existing associations are preserved.')
         def operation():
-            proposals, catalog = analyze(self.lines, inventory, config, ai, boards)
+            proposals, catalog = analyze(self.lines, inventory, config, ai, boards, self.exclusions)
             for pk in {p.part_id for p in proposals if p.action == 'match'}:
                 try:
                     catalog[pk]['_available'] = str(inventory.available(pk))

@@ -36,4 +36,5 @@ def save_settings(path, config):
 def assign(config, line, part):
     mappings = config.setdefault('mappings', [])
     mappings[:] = [m for m in mappings if (m['value'], m['footprint']) != (line.value, line.footprint)]
-    mappings.append({'value': line.value, 'footprint': line.footprint, 'part_id': part['pk']})
+    mappings.append({'value': line.value, 'footprint': line.footprint, 'part_id': part['pk'],
+                     'part_label': ' | '.join(str(part.get(key) or '') for key in ('IPN', 'name')).strip(' | ')})

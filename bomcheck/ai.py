@@ -162,7 +162,11 @@ def validate_decisions(data, row_ids, catalog):
     return proposals
 
 
-def analyze(lines, inventory, config, ai, boards=1):
+def analyze(lines, inventory, config, ai, boards=1, exclusions=None):
+    pending = [(i, line) for i, line in enumerate(lines)
+               if not identity(line, config) and i not in (exclusions or {})]
+    if not pending:
+        return [], {}
     parts = inventory.list('part/', active='true', parameters='true')
     catalog = {p['pk']: p for p in parts if usable(p)}
     if len(catalog) > 1000:
@@ -182,11 +186,12 @@ def analyze(lines, inventory, config, ai, boards=1):
                         'description': str(part.get('description') or '')[:800], 'parameters': parameters[:20],
                         'unallocated_stock': available})
     proposals = []
-    for start in range(0, len(lines), 3):
+    for start in range(0, len(pending), 3):
+        batch = pending[start:start + 3]
         rows = [{'row_id': i, 'references': line.refs, 'value': line.value, 'footprint': line.footprint,
                  'fields': line.fields, 'normalized_value': normalized_value(line), 'required_quantity': line.quantity * boards, 'locked': identity(line, config) is not None}
-                for i, line in enumerate(lines[start:start + 3], start)]
-        selected = {part['part_id']: part for line in lines[start:start + 3] for part in shortlist(line, compact)}
+                for i, line in batch]
+        selected = {part['part_id']: part for _, line in batch for part in shortlist(line, compact)}
         data = ai.complete({'bom': rows, 'boards_to_assemble': boards, 'inventory': list(selected.values())})
         decisions = validate_decisions(data, {r['row_id'] for r in rows}, catalog)
         for proposal in decisions:

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.2 — Preserve and restore associations
+
+- Send only unassociated, non-excluded BOM rows to AI, preserving original row IDs.
+- Show saved associations immediately, including their local part labels, before stock is checked.
+- Automatically refresh availability on opening/importing a BOM when credentials are available.
+- Keep associations visible if the server is offline; stock remains explicitly pending.
+
 ## 0.5.1 — AI connection test
 
 - Test the current AI endpoint and model directly from Settings without saving.

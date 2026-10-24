@@ -63,7 +63,7 @@ def main():
         assert __version__ in dialog.GetTitle()
         dialog.inventory_token = 'test-token-never-persist'
         dialog.config['remember_token'] = True
-        assert dialog.table.GetItemText(0) == 'NOT_CHECKED'
+        assert dialog.table.GetItemText(0) == 'ASSOCIATED'
         def immediate(window, operation, finished):
             try:
                 result = operation()
@@ -115,6 +115,25 @@ def main():
             dialog.on_associate(None)
         assert dialog.table.GetItemText(0) == 'OK_EQUIVALENT'
         assert dialog.config['mappings'][0]['part_id'] == 1
+        restored = CheckerDialog(None, lines, 'test.kicad_pcb', root / 'settings.json')
+        assert restored.table.GetItemText(0) == 'ASSOCIATED'
+        assert 'Resistor 10k' in restored.table.GetItemText(0, 7)
+        with patch('bomcheck.kicad.gui.InvenTree', return_value=inv), \
+             patch('bomcheck.kicad.gui.background', side_effect=immediate):
+            wx.Yield()  # Startup refresh runs without clicking Check availability.
+        assert restored.table.GetItemText(0) == 'OK_EQUIVALENT'
+        with patch('bomcheck.kicad.gui.check', side_effect=ValueError('Server offline')), \
+             patch('bomcheck.kicad.gui.background', side_effect=immediate), \
+             patch('bomcheck.kicad.gui.wx.MessageBox') as popup:
+            restored.on_check(automatic=True)
+        popup.assert_not_called()
+        assert restored.table.GetItemText(0) == 'ASSOCIATED'
+        assert restored.config['mappings'][0]['part_id'] == 1
+        with patch('bomcheck.kicad.gui.analyze') as no_ai:
+            restored.on_ai()
+            no_ai.assert_not_called()
+        restored.closed = True
+        restored.Destroy()
         settings_dialog = AISettings(dialog, {}, root / 'settings.json')
         assert settings_dialog.get_config()['base_url'] == ''
         settings_dialog.Destroy()

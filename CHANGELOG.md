@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1 — AI connection test
+
+- Test the current AI endpoint and model directly from Settings without saving.
+- Run the request in the background and show JSON validation, elapsed time or connection errors.
+
 ## 0.5.0 — Mouser carts, unified Settings and Ollama
 
 - Move InvenTree, AI and Mouser configuration into a tabbed Settings dialog.

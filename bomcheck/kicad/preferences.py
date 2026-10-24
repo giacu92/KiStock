@@ -1,6 +1,8 @@
 """All plugin configuration lives in one native Settings dialog."""
 import copy
 import re
+import threading
+import time
 
 import wx
 
@@ -40,8 +42,11 @@ class SettingsDialog(wx.Dialog):
         self.ai_remember.SetValue(settings.get('remember_key', False))
         self.json_mode = wx.CheckBox(ai, label='Request JSON mode (if supported by the endpoint)')
         self.json_mode.SetValue(settings.get('json_mode', False))
+        self.test_button = wx.Button(ai, label='Test connection')
+        self.test_status = wx.StaticText(ai, label='Test the current endpoint and model without saving settings.')
+        self.test_button.Bind(wx.EVT_BUTTON, self.on_test_ai)
         self.panel(ai, [('API protocol', self.protocol), ('API base URL', self.ai_url), ('Model name', self.model), ('API key (optional for local servers)', self.ai_key)],
-                   [self.ai_remember, self.json_mode], 'OpenAI-compatible example: http://localhost:11434/v1. Ollama native example: http://localhost:11434. Enter an installed model name. AI Assist sends BOM/inventory metadata; Mouser sends BOM/search candidates. API keys are never included in model messages.')
+                   [self.ai_remember, self.json_mode, self.test_button, self.test_status], 'OpenAI-compatible example: http://localhost:11434/v1. Ollama native example: http://localhost:11434. Enter an installed model name. AI Assist sends BOM/inventory metadata; Mouser sends BOM/search candidates. API keys are never included in model messages.')
         settings = config.get('mouser', {})
         self.mouser_key = wx.TextCtrl(mouser, value=session.get('mouser', ''), style=wx.TE_PASSWORD)
         self.search_key = wx.TextCtrl(mouser, value=session.get('mouser-search', ''), style=wx.TE_PASSWORD)
@@ -86,6 +91,43 @@ class SettingsDialog(wx.Dialog):
                 secret.SetValue('')
             self.last_urls[service] = url
         event.Skip()
+
+    def on_test_ai(self, event):
+        if not self.test_button.IsEnabled():
+            return
+        try:
+            client = CompatibleAI(self.ai_url.GetValue(), self.model.GetValue(), self.ai_key.GetValue(),
+                                  self.json_mode.GetValue(), 'ollama' if self.protocol.GetSelection() == 1 else 'openai')
+        except ValueError as error:
+            self.test_status.SetLabel(str(error))
+            self.test_status.Wrap(650)
+            self.book.GetPage(1).Layout()
+            return
+        self.test_button.Disable()
+        self.test_status.SetLabel('Testing model response... First load can take up to 120 seconds.')
+        self.book.GetPage(1).Layout()
+
+        def finish(message):
+            if not self:
+                return
+            self.test_button.Enable()
+            self.test_status.SetLabel(message)
+            self.test_status.Wrap(650)
+            self.book.GetPage(1).Layout()
+
+        def work():
+            started = time.monotonic()
+            try:
+                result = client.complete({'test': 'connection'}, system='This is a connection test. Return only the JSON object {"ok": true}.')
+                if not isinstance(result, dict) or result.get('ok') is not True:
+                    raise ValueError('Model responded, but did not return the expected JSON object {"ok": true}.')
+                message = f'Connection successful: {client.model} returned valid JSON in {time.monotonic() - started:.1f}s.'
+            except Exception as error:
+                # Transport errors are sanitized by CompatibleAI; never display raw credentials.
+                message = str(error) if isinstance(error, ValueError) else 'Connection test failed. Check the server and model.'
+            wx.CallAfter(finish, message)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def get_config(self):
         config = copy.deepcopy(self.original)

@@ -124,6 +124,35 @@ def main():
         preferences.protocol.SetSelection(1)
         assert preferences.get_config()['ai']['protocol'] == 'ollama'
         assert preferences.get_keys()['inventree'] == 'session-token'
+        preferences.ai_url.SetValue('http://localhost:11434')
+        preferences.model.SetValue('ministral-3:3b')
+        client = MagicMock()
+        client.model = 'ministral-3:3b'
+        client.complete.return_value = {'ok': True}
+        pending = []
+        def queue_test(target, daemon):
+            pending.append(target)
+            return MagicMock()
+        with patch('bomcheck.kicad.preferences.CompatibleAI', return_value=client), \
+             patch('bomcheck.kicad.preferences.threading.Thread', side_effect=queue_test):
+            preferences.on_test_ai(None)
+            assert not preferences.test_button.IsEnabled()
+            preferences.on_test_ai(None)
+            assert len(pending) == 1
+            pending.pop()()
+            wx.Yield()
+            assert 'Connection successful' in preferences.test_status.GetLabel()
+            assert preferences.test_button.IsEnabled()
+            client.complete.return_value = {'ok': False}
+            preferences.on_test_ai(None)
+            pending.pop()()
+            wx.Yield()
+            assert 'expected JSON' in preferences.test_status.GetLabel()
+            client.complete.side_effect = ValueError('AI endpoint is unreachable or timed out.')
+            preferences.on_test_ai(None)
+            pending.pop()()
+            wx.Yield()
+            assert 'unreachable' in preferences.test_status.GetLabel()
         preferences.Destroy()
         proposals = [Proposal(0, 'match', 1, 0.95, 'Exact match')]
         review = AIReview(dialog, lines, proposals, inv.parts)

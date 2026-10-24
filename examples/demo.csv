@@ -1,0 +1,6 @@
+Qty,Value,Package,Parts,IPN
+2,10k,R0603,"R1, R2",P1
+1,100n,C0603,C1,P3
+2,LED,LED_0603,"D1, D2",P4
+1,MCU,LQFP48,U1,P5
+1,Connector,PinHeader_2x3,J1,*

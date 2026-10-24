@@ -1,0 +1,7 @@
+{
+  "url": "http://inventree.example.test:1337",
+  "related_as_equivalents": true,
+  "ipn_fields": ["InvenTree IPN", "IPN"],
+  "mpn_fields": ["MPN", "Part Num"],
+  "mappings": []
+}

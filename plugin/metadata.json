@@ -1,0 +1,15 @@
+{
+  "$schema": "https://go.kicad.org/pcm/schemas/v2",
+  "name": "InvenTree BoM Checker",
+  "description": "Check PCB component availability and approved substitutes in InvenTree, directly inside KiCad.",
+  "description_full": "A native PCB Editor Action Plugin for KiCad 9 and 10. Read the open PCB or import CSV, iBOM HTML and KiCad XML. View stock results, search inventory, associate parts and export reports. Uses read-only InvenTree requests. Optional persistent tokens use Windows account encryption. KiCad 11 is not supported by this SWIG package.",
+  "identifier": "local.inventree-bom-checker",
+  "type": "plugin",
+  "author": {"name": "BoM Checker contributors", "contact": {}},
+  "license": "MIT",
+  "resources": {},
+  "tags": ["bom", "inventory", "inventree"],
+  "versions": [
+    {"version": "0.3.0", "status": "testing", "kicad_version": "9.0", "kicad_version_max": "10.99", "runtime": "swig"}
+  ]
+}

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 — Visible version
+
+- Display the loaded version in the PCB Editor plugin menu entry and plugin window title.
+
 ## 0.4.0 — AI assistance and build orders
 
 - Configure an OpenAI-compatible base URL, model and optional encrypted API key inside KiCad.

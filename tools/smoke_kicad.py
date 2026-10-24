@@ -19,6 +19,7 @@ from bomcheck.ai import Proposal
 from bomcheck.kicad.ai_dialogs import AISettings, AIReview
 from bomcheck.kicad.build_dialog import BuildDialog
 from bomcheck.inputs import Line
+from bomcheck.version import __version__
 
 
 def main():
@@ -56,6 +57,7 @@ def main():
     with tempfile.TemporaryDirectory() as folder:
         root = Path(folder)
         dialog = CheckerDialog(None, lines, 'test.kicad_pcb', root / 'settings.json')
+        assert __version__ in dialog.GetTitle()
         dialog.token.SetValue('test-token-never-persist')
         dialog.remember.SetValue(True)
         assert dialog.table.GetItemText(0) == 'NOT_CHECKED'
@@ -168,7 +170,7 @@ def main():
         with patch.object(pcbnew.PYTHON_ACTION_PLUGINS, 'register_action') as register:
             spec.loader.exec_module(module)
             register.assert_called_once_with(module.plugin)
-        assert module.plugin.name == 'InvenTree BoM Checker'
+        assert module.plugin.name == f'InvenTree BoM Checker {__version__}'
         assert Path(module.plugin.icon_file_name).is_file()
         # The queued initial search must see the closed flag before doing work.
         wx.Yield()

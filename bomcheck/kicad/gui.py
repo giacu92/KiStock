@@ -13,6 +13,7 @@ from ..ai import CompatibleAI, analyze, apply_proposals
 from ..inputs import read_bom
 from ..inventree import InvenTree
 from ..report import label, write_reports
+from ..version import __version__
 from .settings import assign, load_settings, save_settings, settings_path
 from .credentials import credential_key, load_secret, save_secret
 
@@ -117,7 +118,7 @@ class PartPicker(wx.Dialog):
 
 class CheckerDialog(wx.Dialog):
     def __init__(self, parent, lines, source, settings_file=None):
-        super().__init__(parent, title='InvenTree BoM Checker', size=(1170, 760), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        super().__init__(parent, title=f'InvenTree BoM Checker {__version__}', size=(1170, 760), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.closed = False
         self.lines, self.source = lines, source or 'Unsaved PCB'
         self.settings_file = Path(settings_file) if settings_file else settings_path()

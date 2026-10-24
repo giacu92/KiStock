@@ -1,11 +1,12 @@
 from pathlib import Path
 import pcbnew
 import wx
+from ..version import __version__
 
 
 class InvenTreeBomChecker(pcbnew.ActionPlugin):
     def defaults(self):
-        self.name = 'InvenTree BoM Checker'
+        self.name = f'InvenTree BoM Checker {__version__}'
         self.category = 'Bill of Materials'
         self.description = 'Check InvenTree stock and substitutes for the open PCB'
         self.show_toolbar_button = True

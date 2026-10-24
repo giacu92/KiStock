@@ -153,8 +153,10 @@ def validate_decisions(data, row_ids, catalog):
             raise ValueError('AI returned invalid confidence or explanation.')
         if action == 'match' and (type(pk) is not int or pk not in catalog or not usable(catalog[pk])):
             raise ValueError('AI proposed a part outside the eligible inventory catalog.')
-        if action != 'match' and pk is not None:
-            raise ValueError('Non-match AI actions must not include a part ID.')
+        if action != 'match':
+            # Some local models echo a candidate ID even when declining a match.
+            # The action owns the meaning: keep/exclude must never assign a part.
+            pk = None
         proposals.append(Proposal(index, action, pk, float(confidence), reason[:1200]))
         seen.add(index)
     if seen != set(row_ids):

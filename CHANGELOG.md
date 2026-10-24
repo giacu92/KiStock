@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.3 — Tolerate irrelevant AI part IDs
+
+- Discard superfluous part IDs on keep/exclude actions instead of rejecting the whole AI response.
+- Continue validating actual matches against eligible inventory IDs before review and application.
+
 ## 0.5.2 — Preserve and restore associations
 
 - Send only unassociated, non-excluded BOM rows to AI, preserving original row IDs.

@@ -28,10 +28,26 @@ class AIValidationTests(unittest.TestCase):
     def test_rejects_unknown_ids_duplicates_missing_rows_and_bad_confidence(self):
         valid = {'row_id': 0, 'action': 'match', 'part_id': 17, 'confidence': 0.95, 'reason': 'Exact package and rating'}
         bad_rows = [[], [valid, valid], [{**valid, 'part_id': 999}], [{**valid, 'row_id': True}],
-                    [{**valid, 'confidence': float('nan')}], [{**valid, 'action': 'exclude'}], [{**valid, 'action': 'delete'}]]
+                    [{**valid, 'confidence': float('nan')}], [{**valid, 'action': 'delete'}]]
         for rows in bad_rows:
             with self.subTest(rows=rows), self.assertRaises(ValueError):
                 validate_decisions({'rows': rows}, {0}, CATALOG)
+
+    def test_non_match_actions_discard_irrelevant_part_ids(self):
+        for action in ('keep', 'exclude'):
+            for pk in (17, 999, '17', 'null', 0):
+                with self.subTest(action=action, part_id=pk):
+                    raw = {'rows': [
+                        {'row_id': 0, 'action': action, 'part_id': pk, 'confidence': 0.99, 'reason': 'No association requested'},
+                        {'row_id': 1, 'action': 'match', 'part_id': 17, 'confidence': 0.99, 'reason': 'Verified resistor'}]}
+                    proposals = validate_decisions(raw, {0, 1}, CATALOG)
+                    self.assertIsNone(proposals[0].part_id)
+                    self.assertEqual(proposals[1].part_id, 17)
+                    config, exclusions = apply_proposals([row('LOGO1', 'Logo', 'Artwork'), row()], {}, {}, proposals, CATALOG)
+                    self.assertEqual(identity(row(), config), ('part_id', '17'))
+                    self.assertIsNone(identity(row('LOGO1', 'Logo', 'Artwork'), config))
+                    self.assertEqual(bool(exclusions), action == 'exclude')
+                    self.assertEqual(raw['rows'][0]['part_id'], pk)
 
     def test_applies_valid_matches_and_exclusions_without_mutating_originals(self):
         lines = [row(), row('LOGO1', 'Logo', 'Artwork')]

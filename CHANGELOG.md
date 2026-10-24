@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 — Mouser carts, unified Settings and Ollama
+
+- Move InvenTree, AI and Mouser configuration into a tabbed Settings dialog.
+- Support local Ollama's native chat API as well as OpenAI-compatible endpoints.
+- Rank inventory candidates locally and send small batches suited to local model contexts.
+- Search real Mouser candidates, ask AI to select suitable parts and review the proposed quantities.
+- Create a new Mouser cart only on explicit confirmation; no order, checkout or payment operation is implemented.
+- Handle MOQ/order multiples, shared SKU stock, unresolved rows, partial cart errors and duplicate-click prevention.
+- Store Mouser credentials with Windows account encryption and keep keys out of model prompts and packages.
+
 ## 0.4.1 — Visible version
 
 - Display the loaded version in the PCB Editor plugin menu entry and plugin window title.

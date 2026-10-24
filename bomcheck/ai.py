@@ -70,22 +70,50 @@ def normalized_value(line):
     return {'value': str(amount.normalize()), 'unit': unit}
 
 
+def shortlist(line, parts, limit=8):
+    """Rank candidates locally so a small Ollama context need not hold the catalog."""
+    aliases = {line.value.lower()}
+    normalized = normalized_value(line)
+    if normalized:
+        scales = {'': '1', 'r': '1', 'k': '1000', 'm': '1000000'} if normalized['unit'] == 'ohm' else {'p': '1e-12', 'n': '1e-9', 'u': '1e-6', 'm': '1e-3', '': '1'}
+        for suffix, scale in scales.items():
+            quantity = Decimal(normalized['value']) / Decimal(scale)
+            if 0 < quantity < 10000:
+                value = format(quantity.normalize(), 'f')
+                aliases.add(value + suffix)
+                if suffix and '.' in value:
+                    aliases.add(value.replace('.', suffix))
+    tokens = set(re.findall(r'[a-z]{2,}|\d{4}', (line.value + ' ' + line.footprint).lower()))
+    def score(part):
+        text = json.dumps(part, ensure_ascii=False).lower().replace('µ', 'u')
+        exact_value = any(re.search(r'(?<![\w.])' + re.escape(alias) + r'(?![\w.])', text) for alias in aliases if alias)
+        return 10 * exact_value + sum(token in text for token in tokens)
+    return sorted(parts, key=score, reverse=True)[:limit]
+
+
 class CompatibleAI:
-    def __init__(self, base_url, model, api_key='', json_mode=False):
+    def __init__(self, base_url, model, api_key='', json_mode=False, protocol='openai'):
         parsed = urlsplit(base_url.strip())
         if parsed.scheme not in ('http', 'https') or not parsed.netloc or parsed.username or parsed.query or parsed.fragment:
             raise ValueError('Enter an HTTP(S) API base URL, for example http://localhost:1234/v1.')
         if not model.strip():
             raise ValueError('Enter the model name exposed by your AI server.')
-        self.endpoint = base_url.strip().rstrip('/') + '/chat/completions'
+        if protocol not in ('openai', 'ollama'):
+            raise ValueError('Unknown AI protocol.')
+        self.protocol = protocol
+        root = base_url.strip().rstrip('/')
+        self.endpoint = root + ('/chat' if root.endswith('/api') else '/api/chat') if protocol == 'ollama' else root + '/chat/completions'
         self.model, self.key, self.json_mode = model.strip(), api_key.strip(), json_mode
         self.opener = build_opener(NoRedirect())
 
-    def complete(self, payload):
-        body = {'model': self.model, 'messages': [{'role': 'system', 'content': SYSTEM},
+    def complete(self, payload, system=SYSTEM):
+        body = {'model': self.model, 'messages': [{'role': 'system', 'content': system},
                 {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}], 'stream': False}
         if self.json_mode:
-            body['response_format'] = {'type': 'json_object'}
+            if self.protocol == 'ollama':
+                body['format'] = 'json'
+            else:
+                body['response_format'] = {'type': 'json_object'}
         headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
         if self.key:
             headers['Authorization'] = 'Bearer ' + self.key
@@ -95,7 +123,8 @@ class CompatibleAI:
                 raw = response.read(4_000_001)
             if len(raw) > 4_000_000:
                 raise ValueError('AI response is too large.')
-            content = json.loads(raw)['choices'][0]['message']['content']
+            envelope = json.loads(raw)
+            content = envelope['message']['content'] if self.protocol == 'ollama' else envelope['choices'][0]['message']['content']
             if content.startswith('```'):
                 content = content.split('\n', 1)[1].rsplit('```', 1)[0]
             return json.loads(content)
@@ -153,11 +182,12 @@ def analyze(lines, inventory, config, ai, boards=1):
                         'description': str(part.get('description') or '')[:800], 'parameters': parameters[:20],
                         'unallocated_stock': available})
     proposals = []
-    for start in range(0, len(lines), 10):
+    for start in range(0, len(lines), 3):
         rows = [{'row_id': i, 'references': line.refs, 'value': line.value, 'footprint': line.footprint,
                  'fields': line.fields, 'normalized_value': normalized_value(line), 'required_quantity': line.quantity * boards, 'locked': identity(line, config) is not None}
-                for i, line in enumerate(lines[start:start + 10], start)]
-        data = ai.complete({'bom': rows, 'boards_to_assemble': boards, 'inventory': compact})
+                for i, line in enumerate(lines[start:start + 3], start)]
+        selected = {part['part_id']: part for line in lines[start:start + 3] for part in shortlist(line, compact)}
+        data = ai.complete({'bom': rows, 'boards_to_assemble': boards, 'inventory': list(selected.values())})
         decisions = validate_decisions(data, {r['row_id'] for r in rows}, catalog)
         for proposal in decisions:
             if identity(lines[proposal.row_id], config) and proposal.action != 'keep':

@@ -19,6 +19,9 @@ from bomcheck.ai import Proposal
 from bomcheck.kicad.ai_dialogs import AISettings, AIReview
 from bomcheck.kicad.build_dialog import BuildDialog
 from bomcheck.inputs import Line
+from bomcheck.kicad.preferences import SettingsDialog
+from bomcheck.kicad.cart_dialog import CartDialog
+from bomcheck.mouser import CartRow
 from bomcheck.version import __version__
 
 
@@ -58,8 +61,8 @@ def main():
         root = Path(folder)
         dialog = CheckerDialog(None, lines, 'test.kicad_pcb', root / 'settings.json')
         assert __version__ in dialog.GetTitle()
-        dialog.token.SetValue('test-token-never-persist')
-        dialog.remember.SetValue(True)
+        dialog.inventory_token = 'test-token-never-persist'
+        dialog.config['remember_token'] = True
         assert dialog.table.GetItemText(0) == 'NOT_CHECKED'
         def immediate(window, operation, finished):
             try:
@@ -75,7 +78,7 @@ def main():
         assert 'test-token-never-persist' not in (root / 'settings.json').read_text()
         assert 'test-token-never-persist' not in (root / 'credentials.json').read_text()
         reopened = CheckerDialog(None, lines, 'test.kicad_pcb', root / 'settings.json')
-        assert reopened.token.GetValue() == 'test-token-never-persist'
+        assert reopened.inventory_token == 'test-token-never-persist'
         reopened.closed = True
         reopened.Destroy()
         # Exercise part search UI, including inventories with no IPN.
@@ -115,6 +118,13 @@ def main():
         settings_dialog = AISettings(dialog, {}, root / 'settings.json')
         assert settings_dialog.get_config()['base_url'] == ''
         settings_dialog.Destroy()
+        preferences = SettingsDialog(dialog, dialog.config, root / 'settings.json', {'inventree': 'session-token'})
+        assert preferences.book.GetPageText(1) == 'AI endpoint'
+        assert preferences.book.GetPageText(2) == 'Mouser'
+        preferences.protocol.SetSelection(1)
+        assert preferences.get_config()['ai']['protocol'] == 'ollama'
+        assert preferences.get_keys()['inventree'] == 'session-token'
+        preferences.Destroy()
         proposals = [Proposal(0, 'match', 1, 0.95, 'Exact match')]
         review = AIReview(dialog, lines, proposals, inv.parts)
         assert review.selected() == proposals
@@ -152,6 +162,18 @@ def main():
         assert build_dialog.created['pk'] == 80
         build_dialog.closed = True
         build_dialog.Destroy()
+        cart_api = MagicMock()
+        cart_api.create_cart.return_value = {'CartKey': 'c0f9eb83-7881-4faa-b663-320710b25a11', 'CartItems': []}
+        cart_rows = [CartRow(0, 'R1', '10k', 'R0603', 2, 2, '123-RES10K', 'RES10K', 0.99, 'Verified', 100)]
+        cart_dialog = CartDialog(dialog, cart_api, cart_rows, root / 'carts')
+        with patch('bomcheck.kicad.gui.background', side_effect=immediate):
+            cart_dialog.on_create(None)
+            cart_dialog.on_create(None)
+        cart_api.create_cart.assert_called_once()
+        assert cart_dialog.cart_key == cart_api.create_cart.return_value['CartKey']
+        assert list((root / 'carts').glob('*.json'))
+        cart_dialog.closed = True
+        cart_dialog.Destroy()
         dialog.closed = True
         dialog.Destroy()
         # Verify the package registers under its installed relative namespace.

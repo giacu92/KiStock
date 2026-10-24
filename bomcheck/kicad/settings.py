@@ -23,7 +23,9 @@ def save_settings(path, config):
     # Raw credentials are stored separately with Windows account encryption.
     safe = {k: config[k] for k in ('url', 'related_as_equivalents', 'mappings', 'remember_token') if k in config}
     if 'ai' in config:
-        safe['ai'] = {k: config['ai'][k] for k in ('base_url', 'model', 'remember_key', 'json_mode') if k in config['ai']}
+        safe['ai'] = {k: config['ai'][k] for k in ('base_url', 'model', 'remember_key', 'json_mode', 'protocol') if k in config['ai']}
+    if 'mouser' in config:
+        safe['mouser'] = {k: config['mouser'][k] for k in ('country', 'currency', 'remember_key') if k in config['mouser']}
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix('.tmp')

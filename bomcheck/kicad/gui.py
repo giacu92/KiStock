@@ -10,6 +10,7 @@ import wx
 
 from ..checker import check, identity, usable
 from ..ai import CompatibleAI, analyze, apply_proposals
+from ..mouser import Mouser, prepare_cart
 from ..inputs import read_bom
 from ..inventree import InvenTree
 from ..report import label, write_reports
@@ -137,35 +138,28 @@ class CheckerDialog(wx.Dialog):
         layout = wx.BoxSizer(wx.VERTICAL)
         self.source_label = wx.StaticText(self, label='Source: ' + self.source)
         layout.Add(self.source_label, 0, wx.EXPAND | wx.ALL, 12)
-        grid = wx.FlexGridSizer(cols=4, hgap=8, vgap=10)
-        grid.AddGrowableCol(1)
-        grid.AddGrowableCol(3)
-        self.url = wx.TextCtrl(self, value=self.config['url'])
-        self.token = wx.TextCtrl(self, value=saved_token or os.environ.get('INVENTREE_TOKEN', ''), style=wx.TE_PASSWORD)
-        grid.Add(wx.StaticText(self, label='InvenTree URL'), 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self.url, 1, wx.EXPAND)
-        grid.Add(wx.StaticText(self, label='InvenTree API token'), 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self.token, 1, wx.EXPAND)
+        self.inventory_token = saved_token or os.environ.get('INVENTREE_TOKEN', '')
+        self.mouser_key = ''
+        self.mouser_search_key = ''
+        for service, attribute, url in [('ai', 'ai_key', self.config.get('ai', {}).get('base_url', '')),
+                                         ('mouser', 'mouser_key', 'https://api.mouser.com'),
+                                         ('mouser-search', 'mouser_search_key', 'https://api.mouser.com')]:
+            try:
+                setattr(self, attribute, load_secret(self.settings_file, credential_key(service, url)))
+            except Exception:
+                pass
+        controls = wx.BoxSizer(wx.HORIZONTAL)
+        self.settings_button = wx.Button(self, label='Settings…')
+        controls.Add(self.settings_button, 0, wx.RIGHT, 16)
+        controls.Add(wx.StaticText(self, label='Boards to assemble'), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         self.boards = wx.SpinCtrl(self, min=1, max=100000, initial=1)
-        self.related = wx.CheckBox(self, label='Use related parts as approved equivalents')
-        self.related.SetValue(self.config.get('related_as_equivalents', True))
-        grid.Add(wx.StaticText(self, label='Boards to assemble'), 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self.boards, 0)
-        grid.Add(self.related, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.AddSpacer(1)
-        layout.Add(grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
-        credentials_bar = wx.BoxSizer(wx.HORIZONTAL)
-        self.remember = wx.CheckBox(self, label='Remember API token on this computer (Windows account encryption)')
-        self.remember.SetValue(self.config.get('remember_token', False))
-        self.save_button = wx.Button(self, label='Save settings')
-        credentials_bar.Add(self.remember, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
-        credentials_bar.Add(self.save_button)
-        layout.Add(credentials_bar, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        controls.Add(self.boards)
+        layout.Add(controls, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
         ai_bar = wx.BoxSizer(wx.HORIZONTAL)
-        self.ai_settings_button = wx.Button(self, label='AI settings…')
         self.ai_button = wx.Button(self, label='AI Assist: filter and match…')
         self.reset_exclusions = wx.Button(self, label='Reset AI exclusions')
-        for button in (self.ai_settings_button, self.ai_button, self.reset_exclusions):
+        self.mouser_button = wx.Button(self, label='Create Mouser cart…')
+        for button in (self.ai_button, self.reset_exclusions, self.mouser_button):
             ai_bar.Add(button, 0, wx.RIGHT, 8)
         layout.Add(ai_bar, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
         bar = wx.BoxSizer(wx.HORIZONTAL)
@@ -193,11 +187,10 @@ class CheckerDialog(wx.Dialog):
         self.associate.Bind(wx.EVT_BUTTON, self.on_associate)
         self.export.Bind(wx.EVT_BUTTON, self.on_export)
         self.build_button.Bind(wx.EVT_BUTTON, self.on_build)
-        self.save_button.Bind(wx.EVT_BUTTON, self.on_save)
-        self.ai_settings_button.Bind(wx.EVT_BUTTON, self.on_ai_settings)
+        self.settings_button.Bind(wx.EVT_BUTTON, self.on_settings)
         self.ai_button.Bind(wx.EVT_BUTTON, self.on_ai)
         self.reset_exclusions.Bind(wx.EVT_BUTTON, self.on_reset_exclusions)
-        self.url.Bind(wx.EVT_KILL_FOCUS, self.on_server_changed)
+        self.mouser_button.Bind(wx.EVT_BUTTON, self.on_mouser)
         self.table.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_selection)
         self.table.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.on_associate)
         self.Bind(wx.EVT_BUTTON, self.on_close, id=wx.ID_CLOSE)
@@ -228,46 +221,55 @@ class CheckerDialog(wx.Dialog):
                 self.table.SetItemTextColour(index, wx.Colour(170, 60, 20))
 
     def controls_config(self):
-        config = copy.deepcopy(self.config)
-        url = self.url.GetValue().strip().rstrip('/')
-        if url != config['url'].rstrip('/'):
-            # Part IDs are server-specific. Never carry associations to a new host.
-            config['mappings'] = []
-        config.update(url=url, related_as_equivalents=self.related.GetValue(), remember_token=self.remember.GetValue())
-        return config
+        return copy.deepcopy(self.config)
 
     def persist(self, config):
         save_secret(self.settings_file, credential_key('inventree', config['url']),
-                    self.token.GetValue().strip() if config['remember_token'] else '')
+                    self.inventory_token if config.get('remember_token') else '')
         save_settings(self.settings_file, config)
 
-    def on_save(self, event=None):
+    def on_settings(self, event=None, page=0):
+        from .preferences import SettingsDialog
+        session = {'inventree': self.inventory_token, 'ai': self.ai_key,
+                   'mouser': self.mouser_key, 'mouser-search': self.mouser_search_key}
+        dialog = SettingsDialog(self, self.config, self.settings_file, session, page)
         try:
-            config = self.controls_config()
-            InvenTree(config['url'], '')  # Validate without a network request.
-            self.persist(config)
+            if dialog.ShowModal() != wx.ID_OK:
+                return False
+            config, keys = dialog.get_config(), dialog.get_keys()
+            slots = [('inventree', config['url'], config.get('remember_token')),
+                     ('ai', config['ai']['base_url'], config['ai']['remember_key']),
+                     ('mouser', 'https://api.mouser.com', config['mouser']['remember_key']),
+                     ('mouser-search', 'https://api.mouser.com', config['mouser']['remember_key'])]
+            for service, url, remember in slots:
+                save_secret(self.settings_file, credential_key(service, url), keys[service] if remember else '')
+            save_settings(self.settings_file, config)
+            if config['url'] != self.config['url'] or config.get('related_as_equivalents') != self.config.get('related_as_equivalents') or keys['inventree'] != self.inventory_token:
+                self.results, self.exclusions = None, {}
+                self.export.Disable()
+                self.build_button.Disable()
+                self.paint_rows()
             self.config = config
-            self.status.SetLabel('Settings saved. API token remembered.' if config['remember_token'] else 'Settings saved. Saved API token removed for this server.')
+            self.inventory_token, self.ai_key = keys['inventree'], keys['ai']
+            self.mouser_key, self.mouser_search_key = keys['mouser'], keys['mouser-search']
+            self.status.SetLabel('Settings saved. Connections and credentials are configured under Settings.')
+            return True
         except Exception as error:
             wx.MessageBox(str(error), 'Cannot save settings', wx.OK | wx.ICON_ERROR)
-
-    def on_server_changed(self, event):
-        if self.url.GetValue().strip().rstrip('/') != self.config['url'].rstrip('/'):
-            try:
-                self.token.SetValue(load_secret(self.settings_file, credential_key('inventree', self.url.GetValue())))
-            except Exception:
-                self.token.SetValue('')
-        event.Skip()
+            return False
+        finally:
+            for control in (dialog.token, dialog.ai_key, dialog.mouser_key, dialog.search_key):
+                control.SetValue('')
+            dialog.Destroy()
 
     def client(self, config):
-        token = self.token.GetValue().strip()
-        if not token:
-            raise ValueError('Enter an InvenTree API token first.')
-        return InvenTree(config['url'], token)
+        if not self.inventory_token:
+            raise ValueError('Enter an InvenTree API token under Settings → InvenTree first.')
+        return InvenTree(config['url'], self.inventory_token)
 
     def set_busy(self, busy):
         self.busy = busy
-        for control in (self.run, self.import_button, self.associate, self.url, self.token, self.boards, self.related, self.remember, self.save_button, self.ai_button, self.ai_settings_button, self.reset_exclusions):
+        for control in (self.run, self.import_button, self.associate, self.boards, self.settings_button, self.ai_button, self.reset_exclusions, self.mouser_button):
             control.Enable(not busy)
         self.export.Enable(not busy and self.results is not None)
         self.build_button.Enable(not busy and bool(self.results) and all(r.status in ('OK', 'OK_EQUIVALENT', 'EXCLUDED_AI') for r in self.results))
@@ -370,25 +372,7 @@ class CheckerDialog(wx.Dialog):
             wx.MessageBox(str(error), 'Cannot associate part', wx.OK | wx.ICON_ERROR)
 
     def on_ai_settings(self, event=None):
-        from .ai_dialogs import AISettings
-        dialog = AISettings(self, self.config.get('ai', {}), self.settings_file)
-        try:
-            if dialog.ShowModal() != wx.ID_OK:
-                return False
-            config = self.controls_config()
-            config['ai'] = dialog.get_config()
-            key = dialog.key.GetValue().strip()
-            save_secret(self.settings_file, credential_key('ai', config['ai']['base_url']), key if config['ai']['remember_key'] else '')
-            save_settings(self.settings_file, config)
-            self.config, self.ai_key = config, key
-            self.status.SetLabel('AI settings saved. Click AI Assist to send BOM and inventory metadata to the configured endpoint.')
-            return True
-        except Exception as error:
-            wx.MessageBox(str(error), 'Cannot save AI settings', wx.OK | wx.ICON_ERROR)
-            return False
-        finally:
-            dialog.key.SetValue('')
-            dialog.Destroy()
+        return self.on_settings(page=1)
 
     def on_ai(self, event=None):
         if self.busy:
@@ -402,7 +386,7 @@ class CheckerDialog(wx.Dialog):
             inventory = self.client(config)
             settings = config['ai']
             key = self.ai_key or load_secret(self.settings_file, credential_key('ai', settings['base_url']))
-            ai = CompatibleAI(settings['base_url'], settings['model'], key, settings.get('json_mode', False))
+            ai = CompatibleAI(settings['base_url'], settings['model'], key, settings.get('json_mode', False), settings.get('protocol', 'openai'))
             boards = self.boards.GetValue()
             self.persist(config)
         except Exception as error:
@@ -445,6 +429,41 @@ class CheckerDialog(wx.Dialog):
         self.exclusions = {}
         self.on_check()
 
+    def on_mouser(self, event=None):
+        if self.busy:
+            return
+        if not self.mouser_key and not self.on_settings(page=2):
+            return
+        if not self.config.get('ai', {}).get('base_url') and not self.on_settings(page=1):
+            return
+        try:
+            if not self.lines:
+                raise ValueError('Load a BOM first.')
+            settings = self.config.get('mouser', {})
+            mouser = Mouser(self.mouser_key, self.mouser_search_key, settings.get('country', 'IT'), settings.get('currency', 'EUR'))
+            settings = self.config['ai']
+            ai = CompatibleAI(settings['base_url'], settings['model'], self.ai_key, settings.get('json_mode', False), settings.get('protocol', 'openai'))
+            boards = self.boards.GetValue()
+        except Exception as error:
+            wx.MessageBox(str(error), 'Cannot prepare Mouser cart', wx.OK | wx.ICON_ERROR)
+            return
+        self.set_busy(True)
+        self.status.SetLabel('Searching Mouser and asking the configured AI to select verified candidates. No cart has been created yet.')
+        def done(rows, error):
+            self.set_busy(False)
+            if error:
+                self.status.SetLabel('Mouser preparation failed. No cart was created.')
+                wx.MessageBox(error, 'Mouser cart', wx.OK | wx.ICON_ERROR)
+                return
+            from .cart_dialog import CartDialog
+            dialog = CartDialog(self, mouser, rows, self.settings_file.parent / 'carts')
+            try:
+                dialog.ShowModal()
+            finally:
+                dialog.closed = True
+                dialog.Destroy()
+        background(self, lambda: prepare_cart(self.lines, self.exclusions, boards, mouser, ai), done)
+
     def on_export(self, event):
         if not self.results:
             return
@@ -480,7 +499,9 @@ class CheckerDialog(wx.Dialog):
 
     def on_close(self, event):
         self.closed = True
-        self.token.SetValue('')
+        self.inventory_token = ''
+        self.mouser_key = ''
+        self.mouser_search_key = ''
         self.ai_key = ''
         if self.IsModal():
             self.EndModal(wx.ID_CLOSE)

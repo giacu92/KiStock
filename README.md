@@ -6,8 +6,8 @@ A native KiCad PCB Editor plugin that checks whether the components on your boar
 
 The plugin is installed for KiCad 10 in your user plugin folder. Restart the **PCB Editor**, open a board, then choose **Tools > External Plugins > InvenTree BoM Checker**, or click its circuit/checkmark toolbar icon.
 
-1. Enter the InvenTree server URL and API token. Replace the example server URL with your own InvenTree server address. The token is masked. Enable **Remember API token** and click **Save settings** to retain it across KiCad restarts using Windows account encryption. Uncheck the option and save to forget it.
-2. Choose the number of boards to assemble. Enable **Use related parts as approved equivalents** if your InvenTree related-part links represent valid substitutions.
+1. Open **Settings → InvenTree** and enter the server URL and API token. Replace the example server URL with your own InvenTree server address. The token is masked. Enable **Remember token** and click **Save settings** to retain it across KiCad restarts using Windows account encryption. Uncheck the option and save to forget it.
+2. Choose the number of boards to assemble. Under **Settings → InvenTree**, enable **Treat direct related parts as approved equivalents** if your InvenTree related-part links represent valid substitutions.
 3. Click **Check availability**. Results appear directly in the KiCad plugin window.
 4. For an unmapped row, select it and click **Associate selected row**, or double-click it. Search the inventory, compare the **Available (unallocated)** column, check the package and ratings, then confirm the exact part. Failed quantity lookups are shown as Unknown, never zero.
 5. Availability refreshes automatically after **Use selected part**, and the selected row is populated. Shared stock is recalculated across the whole BOM. Associations are saved locally and reused for rows with the same value and footprint that have no explicit IPN/MPN.
@@ -17,7 +17,7 @@ The board snapshot comes from the currently open PCB, including unsaved componen
 
 ## Install or distribute
 
-The self-contained package is `dist/inventree-bom-checker-0.4.0.zip`. On another installation, open KiCad's **Plugin and Content Manager**, choose **Install from File**, select the ZIP and apply the installation. Restart the PCB Editor afterward.
+The self-contained package is `dist/inventree-bom-checker-0.5.0.zip`. On another installation, open KiCad's **Plugin and Content Manager**, choose **Install from File**, select the ZIP and apply the installation. Restart the PCB Editor afterward.
 
 Alternatively, on Windows run:
 
@@ -114,7 +114,7 @@ KiCad must inherit `INVENTREE_TOKEN` from its environment. Launch it from the Po
 
 ## AI assistance
 
-Click **AI settings** to configure an OpenAI-compatible API base URL, model name and optional API key. Include the API prefix in the base URL, for example `http://localhost:1234/v1`. The plugin appends `/chat/completions`. There is no default endpoint or model, and local servers may leave the key empty. Enable JSON mode only if supported by your server. An optional remembered AI key uses the same Windows account encryption as the InvenTree token.
+Open **Settings → AI endpoint** to configure an OpenAI-compatible API base URL, model name and optional API key. Include the API prefix in the base URL, for example `http://localhost:1234/v1`. The plugin appends `/chat/completions`. There is no default endpoint or model, and local servers may leave the key empty. Enable JSON mode only if supported by your server. An optional remembered AI key uses the same Windows account encryption as the InvenTree token.
 
 Click **AI Assist: filter and match** to analyze the BOM against the active inventory catalog. Default system instructions tell the model to:
 
@@ -129,7 +129,7 @@ The review dialog shows the proposed action, part, available quantity, confidenc
 
 Confirmed matches become local associations; availability refreshes automatically. Confirmed exclusions remain in the results and reports as `EXCLUDED_AI`, with the original requirement and reason recorded in the notes. They use no stock. **Reset AI exclusions** restores all excluded rows. Exclusions last for the current loaded BOM/window; associations persist. You can correct an AI association with the normal association dialog.
 
-AI Assist sends BOM references, values, footprints and custom fields, plus eligible inventory part names, descriptions, parameters and unallocated quantities, to your configured endpoint. It does not send InvenTree credentials. Catalogs up to 1000 eligible parts are supported, with requests in batches of 10 BOM rows. No external AI service has been configured or called during development; the request and apply paths were tested with simulated responses. Model quality and your endpoint's context limit still determine how well it can propose matches.
+AI Assist sends BOM references, values, footprints and custom fields, plus eligible inventory part names, descriptions, parameters and unallocated quantities, to your configured endpoint. It does not send InvenTree credentials. Catalogs up to 1000 eligible parts are supported, with local candidate ranking, at most 8 shortlisted candidates per row, and requests in batches of 3 BOM rows. No external AI service has been configured or called during development; the request and apply paths were tested with simulated responses. Model quality and your endpoint's context limit still determine how well it can propose matches.
 
 The request format follows the official [Chat Completions API](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create). JSON mode is optional for compatibility with local implementations.
 
@@ -149,10 +149,34 @@ Stock is rechecked before writes and shared source lots are counted only once. B
 
 Creating the order **allocates/reserves** stock, including the selected bare-PCB lot. It does not consume stock or mark the build complete. Continue and complete the build in InvenTree to record actual consumption. The PCB lot is recorded as the source of the BOM allocation, not just mentioned in a note.
 
+## Unified Settings and local Ollama
+
+Version 0.5.0 moves all connection settings into **Settings**, with **InvenTree**, **AI endpoint** and **Mouser** tabs. Board quantity stays in the main window as an operation parameter. Existing server, mappings, token preferences and AI settings are retained. The loaded version appears in the menu and main window title.
+
+For local Ollama, select **Ollama native**, use base URL `http://localhost:11434`, and enter the exact name of an installed model. Leave the AI key empty unless your server requires one. The plugin sends non-streaming requests to `/api/chat`; JSON mode uses Ollama's `format: json` option. Alternatively choose **OpenAI-compatible** and use `http://localhost:11434/v1`. See [Ollama chat API](https://docs.ollama.com/api/chat) and [OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility).
+
+## Create a Mouser cart without ordering
+
+1. Under **Settings → Mouser**, configure the Cart API key and, if different, a Search API key. The Search field may be left blank only when the Cart key also has Search API access. Set country/currency as appropriate. Keys may be remembered with Windows account encryption.
+2. Configure the local or hosted model under **Settings → AI endpoint**.
+3. Click **Create Mouser cart**. The plugin searches Mouser for real candidates, using explicit Mouser/MPN fields when available, or normalized value/package queries. Eagle import IDs are removed only from search queries, not component identity.
+4. The AI chooses only from the supplied candidates and may leave rows unresolved. It checks value, package, ratings and stock. The preview shows supplier SKU, manufacturer number, stock, requested quantity, actual cart quantity and reasoning. MOQ/order-multiple increases are visible.
+5. Review the checked rows and press **Create new cart — do not order**. The plugin uses a blank/new cart key, aggregates duplicate SKUs and calls only Mouser's cart insertion endpoint. Existing carts are not overwritten.
+
+The cart covers the full included project BOM for the selected board count, even for components already in your warehouse. DNP and explicitly excluded AI rows are omitted. Unresolved rows are listed but not silently added. A verified candidate can still be technically wrong, so review specifications before confirming.
+
+No order, checkout, payment or order-submission API exists in this integration. Mouser API credentials are never sent to the AI. The resulting CartKey and response are saved under the plugin settings directory in `carts/<CartKey>.json`. The website button opens Mouser's homepage; it does not claim to attach the API cart to an unrelated browser-session basket. Use the returned CartKey to identify the API cart in your Mouser integration/account.
+
+The creation button cannot submit twice within the same dialog. A failed or uncertain response is not retried automatically. If Mouser returned a cart key alongside errors, inspect that cart before creating another one.
+
+Official references: [Mouser Cart API](https://gr.mouser.com/en/api-cart/) and [request/response schema](https://api.mouser.com/api/docs/V1). Mouser may require separate Search and Cart API keys. Configure keys with the appropriate Search and Cart permissions in Settings. Cart creation and both AI protocols were tested with simulated responses.
+
 ## Release checkpoints
 
 - `v0.3.0-persistent-token`: the pre-AI checkpoint, including the AppConsole fix and persistent Windows-encrypted InvenTree tokens.
 - `v0.4.0-ai-build-orders`: configurable AI assistance, engineering-value instructions, automatic refresh after association, stock quantities in part search, and build/BOM preparation with exact PCB-lot allocation.
+- `v0.4.1-visible-version`: show the loaded plugin version in its menu entry and window title.
+- `v0.5.0-mouser-ollama-settings`: unified Settings, local Ollama support and reviewed Mouser cart creation without order submission.
 
 Both version ZIPs are retained under `dist`. The AI version is developed on `codex/ai-bom-assistance`.
 

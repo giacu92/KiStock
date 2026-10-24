@@ -49,6 +49,8 @@ class SettingsTests(unittest.TestCase):
             save_settings(path, {'url': 'http://inventory.test', 'mappings': [], 'token': 'secret-token', 'api_token': 'secret-token'})
             self.assertNotIn('secret-token', path.read_text())
             self.assertNotIn('token', load_settings(path))
+            save_settings(path, {'url': 'http://inventory.test', 'ai': {'base_url': 'http://ai.test/v1', 'model': 'model', 'api_key': 'private-ai-key'}})
+            self.assertNotIn('private-ai-key', path.read_text())
 
     def test_part_id_lookup(self):
         client = InvenTree('http://inventory.test', 'secret')

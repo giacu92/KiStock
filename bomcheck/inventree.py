@@ -1,4 +1,4 @@
-"""Read-only InvenTree REST client, using Python's standard library."""
+"""InvenTree REST client; writes are explicit and used only by build creation."""
 import json
 from decimal import Decimal, InvalidOperation
 from urllib.error import HTTPError, URLError
@@ -89,3 +89,19 @@ class InvenTree:
 
     def suggestions(self, value):
         return self.list('part/', search=value, active='true')[:8] if value else []
+
+    def post(self, path, payload):
+        url = urljoin(self.api, path)
+        if not url.startswith(self.api) or urlsplit(url).netloc != urlsplit(self.api).netloc:
+            raise ValueError('Write endpoint is outside the configured InvenTree API.')
+        request = Request(url, data=json.dumps(payload).encode('utf-8'), method='POST',
+                          headers={'Authorization': 'Token ' + self.token, 'Content-Type': 'application/json', 'Accept': 'application/json'})
+        try:
+            with self.opener.open(request, timeout=self.timeout) as response:
+                data = json.load(response)
+            self.cache.clear()
+            return data
+        except HTTPError as error:
+            raise ValueError(f'InvenTree write returned HTTP {error.code}. Check create/build/BOM/allocation permissions and the submitted data. No automatic retry was made.') from None
+        except (URLError, TimeoutError, OSError, ValueError):
+            raise ValueError('InvenTree write could not be confirmed. Check InvenTree before retrying; the server may have accepted it.') from None

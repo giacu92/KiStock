@@ -95,11 +95,16 @@ def distribute(results, stock):
             row.status = 'OK'
 
 
-def check(lines, client, config, boards=1):
+def check(lines, client, config, boards=1, exclusions=None):
     results, parts, stock = [], {}, {}
-    for line in lines:
+    for index, line in enumerate(lines):
         row = Result(line, line.quantity * boards)
         results.append(row)
+        if index in (exclusions or {}):
+            row.required = 0
+            row.status = 'EXCLUDED_AI'
+            row.note = f'Excluded after AI review (original requirement: {line.quantity * boards}): {exclusions[index]}'
+            continue
         key = identity(line, config)
         if key is None:
             row.status = 'UNMAPPED'

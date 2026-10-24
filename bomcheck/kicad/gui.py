@@ -9,6 +9,7 @@ from pathlib import Path
 import wx
 
 from ..checker import check, identity, usable
+from ..ai import CompatibleAI, analyze, apply_proposals
 from ..inputs import read_bom
 from ..inventree import InvenTree
 from ..report import label, write_reports
@@ -30,10 +31,11 @@ def background(window, operation, finished):
 
 
 class PartPicker(wx.Dialog):
-    def __init__(self, parent, client, line):
-        super().__init__(parent, title='Associate with an InvenTree part', size=(820, 530), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+    def __init__(self, parent, client, line, filters=None):
+        super().__init__(parent, title='Associate with an InvenTree part', size=(990, 530), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.closed, self.parts, self.selected = False, [], None
         self.client = client
+        self.filters = filters or {}
         layout = wx.BoxSizer(wx.VERTICAL)
         layout.Add(wx.StaticText(self, label=f'{line.refs}  |  {line.value}  |  {line.footprint}'), 0, wx.ALL, 12)
         layout.Add(wx.StaticText(self, label='Choose an exact part. Check package, ratings and tolerance before associating.'), 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
@@ -44,7 +46,7 @@ class PartPicker(wx.Dialog):
         bar.Add(self.search)
         layout.Add(bar, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
         self.list = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        for col, width in [('ID', 60), ('IPN', 160), ('Name', 250), ('Description', 290)]:
+        for col, width in [('ID', 60), ('IPN', 150), ('Name', 245), ('Available (unallocated)', 155), ('Description', 300)]:
             self.list.AppendColumn(col, width=width)
         layout.Add(self.list, 1, wx.EXPAND | wx.ALL, 12)
         self.status = wx.StaticText(self, label='Enter a search term, then select a result.')
@@ -72,17 +74,34 @@ class PartPicker(wx.Dialog):
         self.list.DeleteAllItems()
         self.status.SetLabel('Searching…')
         def done(parts, error):
-            self.search.Enable()
             if error:
+                self.search.Enable()
                 self.status.SetLabel(error)
                 return
             self.parts = [p for p in parts if usable(p)]
             for part in self.parts:
                 index = self.list.InsertItem(self.list.GetItemCount(), str(part['pk']))
-                for column, text in enumerate([part.get('IPN') or '', part.get('name') or '', part.get('description') or ''], 1):
+                for column, text in enumerate([part.get('IPN') or '', part.get('name') or '', 'Loading…', part.get('description') or ''], 1):
                     self.list.SetItem(index, column, text)
-            self.status.SetLabel(f'{len(self.parts)} eligible parts found. Select one to confirm the association.')
-        background(self, lambda: self.client.list('part/', search=query, active='true'), done)
+            self.status.SetLabel(f'{len(self.parts)} eligible parts found. Loading unallocated stock…')
+            parts_to_load = list(self.parts)
+            def load_stock():
+                quantities = []
+                for part in parts_to_load:
+                    if self.closed:
+                        break
+                    try:
+                        quantities.append(str(self.client.available(part['pk'])))
+                    except Exception:
+                        quantities.append('Unknown')
+                return quantities
+            def show_stock(quantities, stock_error):
+                self.search.Enable()
+                for index, quantity in enumerate(quantities or []):
+                    self.list.SetItem(index, 3, quantity)
+                self.status.SetLabel(f'{len(self.parts)} eligible parts. Available means unallocated stock; Unknown means the stock request failed.')
+            background(self, load_stock, show_stock)
+        background(self, lambda: self.client.list('part/', search=query, active='true', **self.filters), done)
 
     def on_accept(self, event):
         index = self.list.GetFirstSelected()
@@ -103,6 +122,9 @@ class CheckerDialog(wx.Dialog):
         self.lines, self.source = lines, source or 'Unsaved PCB'
         self.settings_file = Path(settings_file) if settings_file else settings_path()
         self.config = load_settings(self.settings_file)
+        self.exclusions = {}
+        self.ai_key = ''
+        self.focus_row = None
         self.credential_error = ''
         try:
             saved_token = load_secret(self.settings_file, credential_key('inventree', self.config['url']))
@@ -138,12 +160,20 @@ class CheckerDialog(wx.Dialog):
         credentials_bar.Add(self.remember, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         credentials_bar.Add(self.save_button)
         layout.Add(credentials_bar, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        ai_bar = wx.BoxSizer(wx.HORIZONTAL)
+        self.ai_settings_button = wx.Button(self, label='AI settings…')
+        self.ai_button = wx.Button(self, label='AI Assist: filter and match…')
+        self.reset_exclusions = wx.Button(self, label='Reset AI exclusions')
+        for button in (self.ai_settings_button, self.ai_button, self.reset_exclusions):
+            ai_bar.Add(button, 0, wx.RIGHT, 8)
+        layout.Add(ai_bar, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
         bar = wx.BoxSizer(wx.HORIZONTAL)
         self.run = wx.Button(self, label='Check availability')
         self.import_button = wx.Button(self, label='Import CSV / iBOM / XML…')
         self.associate = wx.Button(self, label='Associate selected row…')
         self.export = wx.Button(self, label='Export HTML + CSV…')
-        for button in [self.run, self.import_button, self.associate, self.export]:
+        self.build_button = wx.Button(self, label='Create build order…')
+        for button in [self.run, self.import_button, self.associate, self.export, self.build_button]:
             bar.Add(button, 0, wx.RIGHT, 8)
         layout.Add(bar, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
         self.table = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
@@ -161,7 +191,11 @@ class CheckerDialog(wx.Dialog):
         self.import_button.Bind(wx.EVT_BUTTON, self.on_import)
         self.associate.Bind(wx.EVT_BUTTON, self.on_associate)
         self.export.Bind(wx.EVT_BUTTON, self.on_export)
+        self.build_button.Bind(wx.EVT_BUTTON, self.on_build)
         self.save_button.Bind(wx.EVT_BUTTON, self.on_save)
+        self.ai_settings_button.Bind(wx.EVT_BUTTON, self.on_ai_settings)
+        self.ai_button.Bind(wx.EVT_BUTTON, self.on_ai)
+        self.reset_exclusions.Bind(wx.EVT_BUTTON, self.on_reset_exclusions)
         self.url.Bind(wx.EVT_KILL_FOCUS, self.on_server_changed)
         self.table.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_selection)
         self.table.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.on_associate)
@@ -169,6 +203,7 @@ class CheckerDialog(wx.Dialog):
         self.Bind(wx.EVT_CLOSE, self.on_close)
         self.paint_rows()
         self.export.Disable()
+        self.build_button.Disable()
         if self.credential_error:
             self.status.SetLabel(self.credential_error + ' Enter the token again and save settings.')
 
@@ -231,9 +266,10 @@ class CheckerDialog(wx.Dialog):
 
     def set_busy(self, busy):
         self.busy = busy
-        for control in (self.run, self.import_button, self.associate, self.url, self.token, self.boards, self.related, self.remember, self.save_button):
+        for control in (self.run, self.import_button, self.associate, self.url, self.token, self.boards, self.related, self.remember, self.save_button, self.ai_button, self.ai_settings_button, self.reset_exclusions):
             control.Enable(not busy)
         self.export.Enable(not busy and self.results is not None)
+        self.build_button.Enable(not busy and bool(self.results) and all(r.status in ('OK', 'OK_EQUIVALENT', 'EXCLUDED_AI') for r in self.results))
 
     def on_check(self, event=None):
         if self.busy:
@@ -263,10 +299,13 @@ class CheckerDialog(wx.Dialog):
             self.results, self.parts, self.stock = value
             self.checked_boards = boards
             self.paint_rows()
+            if self.focus_row is not None and self.focus_row < len(self.lines):
+                self.table.Select(self.focus_row)
+                self.table.EnsureVisible(self.focus_row)
             counts = Counter(row.status for row in self.results)
             self.status.SetLabel(' | '.join(f'{state}: {count}' for state, count in sorted(counts.items())))
             self.set_busy(False)
-        background(self, lambda: check(self.lines, client, config, boards), done)
+        background(self, lambda: check(self.lines, client, config, boards, self.exclusions), done)
 
     def on_import(self, event):
         with wx.FileDialog(self, 'Import a BOM', wildcard='BOM files (*.csv;*.html;*.xml)|*.csv;*.html;*.xml', style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
@@ -277,9 +316,12 @@ class CheckerDialog(wx.Dialog):
                 if not lines:
                     raise ValueError('The BOM contains no populated components.')
                 self.lines, self.source = lines, dialog.GetPath()
+                self.exclusions = {}
+                self.focus_row = None
                 self.source_label.SetLabel('Source: ' + self.source)
                 self.results = None
                 self.export.Disable()
+                self.build_button.Disable()
                 self.details.SetValue('')
                 self.paint_rows()
                 self.status.SetLabel('BOM loaded. Run Check availability.')
@@ -320,13 +362,87 @@ class CheckerDialog(wx.Dialog):
                 picker.closed = True
                 picker.Destroy()
             self.config = config
-            self.results = None
-            self.export.Disable()
-            self.paint_rows()
-            self.details.SetValue(f'Associated {line.value} / {line.footprint} with {label(picker.selected)}. Applies to rows with the same value and footprint that have no explicit IPN/MPN.')
-            self.status.SetLabel('Association saved locally. Run Check availability again.')
+            self.exclusions.pop(index, None)
+            self.focus_row = index
+            self.on_check()
         except Exception as error:
             wx.MessageBox(str(error), 'Cannot associate part', wx.OK | wx.ICON_ERROR)
+
+    def on_ai_settings(self, event=None):
+        from .ai_dialogs import AISettings
+        dialog = AISettings(self, self.config.get('ai', {}), self.settings_file)
+        try:
+            if dialog.ShowModal() != wx.ID_OK:
+                return False
+            config = self.controls_config()
+            config['ai'] = dialog.get_config()
+            key = dialog.key.GetValue().strip()
+            save_secret(self.settings_file, credential_key('ai', config['ai']['base_url']), key if config['ai']['remember_key'] else '')
+            save_settings(self.settings_file, config)
+            self.config, self.ai_key = config, key
+            self.status.SetLabel('AI settings saved. Click AI Assist to send BOM and inventory metadata to the configured endpoint.')
+            return True
+        except Exception as error:
+            wx.MessageBox(str(error), 'Cannot save AI settings', wx.OK | wx.ICON_ERROR)
+            return False
+        finally:
+            dialog.key.SetValue('')
+            dialog.Destroy()
+
+    def on_ai(self, event=None):
+        if self.busy:
+            return
+        if not self.config.get('ai', {}).get('base_url') and not self.on_ai_settings():
+            return
+        try:
+            if not self.lines:
+                raise ValueError('Load a BOM before running AI Assist.')
+            config = self.controls_config()
+            inventory = self.client(config)
+            settings = config['ai']
+            key = self.ai_key or load_secret(self.settings_file, credential_key('ai', settings['base_url']))
+            ai = CompatibleAI(settings['base_url'], settings['model'], key, settings.get('json_mode', False))
+            boards = self.boards.GetValue()
+            self.persist(config)
+        except Exception as error:
+            wx.MessageBox(str(error), 'Cannot start AI Assist', wx.OK | wx.ICON_ERROR)
+            return
+        self.set_busy(True)
+        self.status.SetLabel('AI Assist is reviewing BOM and inventory metadata. No changes have been applied.')
+        def operation():
+            proposals, catalog = analyze(self.lines, inventory, config, ai, boards)
+            for pk in {p.part_id for p in proposals if p.action == 'match'}:
+                try:
+                    catalog[pk]['_available'] = str(inventory.available(pk))
+                except Exception:
+                    catalog[pk]['_available'] = 'Unknown'
+            return proposals, catalog
+        def done(value, error):
+            self.set_busy(False)
+            if error:
+                self.status.SetLabel('AI Assist failed. No AI changes applied.')
+                wx.MessageBox(error, 'AI Assist failed', wx.OK | wx.ICON_ERROR)
+                return
+            from .ai_dialogs import AIReview
+            proposals, catalog = value
+            review = AIReview(self, self.lines, proposals, catalog)
+            try:
+                if review.ShowModal() != wx.ID_OK:
+                    self.status.SetLabel('AI proposals dismissed. No AI changes applied.')
+                    return
+                updated, exclusions = apply_proposals(self.lines, config, self.exclusions, review.selected(), catalog)
+                save_settings(self.settings_file, updated)
+                self.config, self.exclusions = updated, exclusions
+                self.on_check()
+            except Exception as failure:
+                wx.MessageBox(str(failure), 'Cannot apply AI proposals', wx.OK | wx.ICON_ERROR)
+            finally:
+                review.Destroy()
+        background(self, operation, done)
+
+    def on_reset_exclusions(self, event):
+        self.exclusions = {}
+        self.on_check()
 
     def on_export(self, event):
         if not self.results:
@@ -343,9 +459,28 @@ class CheckerDialog(wx.Dialog):
             except Exception as error:
                 wx.MessageBox(str(error), 'Cannot export report', wx.OK | wx.ICON_ERROR)
 
+    def on_build(self, event):
+        from .build_dialog import BuildDialog
+        try:
+            config = self.controls_config()
+            if not self.results or self.boards.GetValue() != self.checked_boards or config['url'] != self.config['url']:
+                raise ValueError('Refresh availability for the current server and board quantity before creating a build.')
+            dialog = BuildDialog(self, self.client(config), self.results, self.checked_boards, self.source)
+            try:
+                dialog.ShowModal()
+                created = dialog.created
+            finally:
+                dialog.closed = True
+                dialog.Destroy()
+            if created:
+                self.on_check()
+        except Exception as error:
+            wx.MessageBox(str(error), 'Cannot open build order', wx.OK | wx.ICON_ERROR)
+
     def on_close(self, event):
         self.closed = True
         self.token.SetValue('')
+        self.ai_key = ''
         if self.IsModal():
             self.EndModal(wx.ID_CLOSE)
         else:

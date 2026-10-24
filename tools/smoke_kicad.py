@@ -3,7 +3,7 @@ import importlib.util
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from zipfile import ZipFile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -15,6 +15,10 @@ from bomcheck.kicad.action import InvenTreeBomChecker
 from bomcheck.kicad.gui import CheckerDialog, PartPicker
 from examples.demo import DemoInventory
 from tools.build_plugin import build
+from bomcheck.ai import Proposal
+from bomcheck.kicad.ai_dialogs import AISettings, AIReview
+from bomcheck.kicad.build_dialog import BuildDialog
+from bomcheck.inputs import Line
 
 
 def main():
@@ -79,8 +83,73 @@ def main():
         with patch('bomcheck.kicad.gui.background', side_effect=immediate):
             picker.on_search()
         assert picker.list.GetItemCount() == 5
+        assert picker.list.GetItemText(0, 3) == '1'
+        assert picker.list.GetItemText(4, 3) == '0'
         picker.closed = True
         picker.Destroy()
+        # A failed stock lookup must remain Unknown rather than becoming zero.
+        inv.available = lambda pk: (_ for _ in ()).throw(ValueError('Forbidden'))
+        picker = PartPicker(dialog, inv, lines[0])
+        with patch('bomcheck.kicad.gui.background', side_effect=immediate):
+            picker.on_search()
+        assert picker.list.GetItemText(0, 3) == 'Unknown'
+        picker.closed = True
+        picker.Destroy()
+        # Confirming a part automatically runs availability, without a second click.
+        lines[0].fields = {}
+        dialog.table.Select(0)
+        inv = DemoInventory()
+        original_find = inv.find
+        inv.find = lambda kind, code: [inv.parts[int(code)]] if kind == 'part_id' else original_find(kind, code)
+        picked = MagicMock()
+        picked.selected = inv.parts[1]
+        picked.ShowModal.return_value = wx.ID_OK
+        with patch('bomcheck.kicad.gui.PartPicker', return_value=picked), \
+             patch('bomcheck.kicad.gui.InvenTree', return_value=inv), \
+             patch('bomcheck.kicad.gui.background', side_effect=immediate):
+            dialog.on_associate(None)
+        assert dialog.table.GetItemText(0) == 'OK_EQUIVALENT'
+        assert dialog.config['mappings'][0]['part_id'] == 1
+        settings_dialog = AISettings(dialog, {}, root / 'settings.json')
+        assert settings_dialog.get_config()['base_url'] == ''
+        settings_dialog.Destroy()
+        proposals = [Proposal(0, 'match', 1, 0.95, 'Exact match')]
+        review = AIReview(dialog, lines, proposals, inv.parts)
+        assert review.selected() == proposals
+        review.Destroy()
+        # Exercise the AI apply path and its automatic refresh without a model call.
+        dialog.lines = [Line('R1, R2', '10k', 'R0603', 2, {}), Line('LOGO1', 'Logo', 'Artwork', 1, {})]
+        dialog.config['mappings'] = []
+        dialog.config['ai'] = {'base_url': 'http://localhost:1234/v1', 'model': 'smoke-test'}
+        proposals = [Proposal(0, 'match', 1, 0.95, 'Verified resistor'), Proposal(1, 'exclude', None, 0.99, 'Artwork')]
+        ai_review = MagicMock()
+        ai_review.ShowModal.return_value = wx.ID_OK
+        ai_review.selected.return_value = proposals
+        with patch('bomcheck.kicad.gui.analyze', return_value=(proposals, inv.parts)), \
+             patch('bomcheck.kicad.ai_dialogs.AIReview', return_value=ai_review), \
+             patch('bomcheck.kicad.gui.InvenTree', return_value=inv), \
+             patch('bomcheck.kicad.gui.background', side_effect=immediate):
+            dialog.on_ai()
+        assert dialog.results[1].status == 'EXCLUDED_AI'
+        assert dialog.results[0].status == 'OK_EQUIVALENT'
+        # Build preview and allocation use a fake server, never a real build.
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tests'))
+        from test_builds import Server, results as build_results
+        server = Server()
+        build_dialog = BuildDialog(dialog, server, build_results(server), 2, 'test.kicad_pcb')
+        build_dialog.assembly, build_dialog.pcb = server.parts[1], server.parts[3]
+        build_dialog.lots = [server.lots[30]]
+        build_dialog.stock.InsertItem(0, '30')
+        build_dialog.stock.Select(0)
+        build_dialog.reference.SetValue('BO-001')
+        with patch('bomcheck.kicad.gui.background', side_effect=immediate), patch('bomcheck.kicad.build_dialog.webbrowser.open'):
+            build_dialog.on_prepare()
+            assert build_dialog.create_button.IsEnabled()
+            assert 'stock lot: #30' in build_dialog.preview.GetValue()
+            build_dialog.on_create(None)
+        assert build_dialog.created['pk'] == 80
+        build_dialog.closed = True
+        build_dialog.Destroy()
         dialog.closed = True
         dialog.Destroy()
         # Verify the package registers under its installed relative namespace.

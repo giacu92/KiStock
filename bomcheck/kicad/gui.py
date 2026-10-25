@@ -131,6 +131,9 @@ class PartPicker(wx.Dialog):
 class CheckerDialog(wx.Dialog):
     def __init__(self, parent, lines, source, settings_file=None):
         super().__init__(parent, title=f'InvenTree BoM Checker {__version__}', size=(1170, 760), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        icon_path = Path(__file__).with_name('icon.png')
+        if icon_path.is_file():
+            self.SetIcon(wx.Icon(str(icon_path), wx.BITMAP_TYPE_PNG))
         self.closed = False
         self.lines, self.source = lines, source or 'Unsaved PCB'
         self.settings_file = Path(settings_file) if settings_file else settings_path()

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.7 — InvenTree-inspired plugin icon
+
+- Replace the chip icon with a sand-colored hexagonal box, blue cube and green stock-check badge.
+- Show the icon in the KiCad toolbar and plugin window, with transparent antialiased edges.
+
 ## 0.5.6 — Cancel AI and keep the layout steady
 
 - Add Cancel beside the activity bar during AI Assist and Mouser preparation; discard late responses and stop further batches.

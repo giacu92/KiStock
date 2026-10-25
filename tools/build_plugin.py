@@ -6,26 +6,64 @@ from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED
 
 
-def icon_png():
-    pixels = [[(0, 0, 0, 0) for _ in range(24)] for _ in range(24)]
-    def rect(x0, y0, x1, y1, color):
-        for y in range(y0, y1):
-            for x in range(x0, x1):
-                pixels[y][x] = color
-    ink = (40, 79, 115, 255)
-    rect(4, 4, 20, 20, ink)
-    rect(6, 6, 18, 18, (235, 245, 250, 255))
-    for n in (6, 11, 16):
-        rect(n, 1, n + 2, 4, ink)
-        rect(n, 20, n + 2, 23, ink)
-        rect(1, n, 4, n + 2, ink)
-        rect(20, n, 23, n + 2, ink)
-    for x, y in [(7, 12), (8, 13), (9, 14), (10, 15), (11, 14), (12, 13), (13, 12), (14, 11), (15, 10), (16, 9)]:
-        rect(x, y, x + 2, y + 2, (21, 148, 78, 255))
-    raw = b''.join(b'\0' + bytes(channel for pixel in row for channel in pixel) for row in pixels)
+def icon_png(size=24):
+    """InvenTree-inspired box/cube with a stock-check badge; antialiased at small sizes."""
+    scale = 4
+    edge = size * scale
+    pixels = [[(0, 0, 0, 0) for _ in range(edge)] for _ in range(edge)]
+    factor = edge / 24
+    ink = (43, 53, 68, 255)
+
+    def polygon(points, color):
+        points = [(x * factor, y * factor) for x, y in points]
+        for y in range(edge):
+            for x in range(edge):
+                px, py, inside = x + .5, y + .5, False
+                previous = points[-1]
+                for current in points:
+                    ax, ay = previous
+                    bx, by = current
+                    if (ay > py) != (by > py) and px < (bx - ax) * (py - ay) / (by - ay) + ax:
+                        inside = not inside
+                    previous = current
+                if inside:
+                    pixels[y][x] = color
+
+    def stroke(points, color, width):
+        for a, b in zip(points, points[1:]):
+            ax, ay = (n * factor for n in a)
+            bx, by = (n * factor for n in b)
+            dx, dy = bx - ax, by - ay
+            for y in range(edge):
+                for x in range(edge):
+                    t = max(0, min(1, ((x + .5 - ax) * dx + (y + .5 - ay) * dy) / (dx * dx + dy * dy)))
+                    if (x + .5 - ax - t * dx) ** 2 + (y + .5 - ay - t * dy) ** 2 <= (width * factor / 2) ** 2:
+                        pixels[y][x] = color
+
+    outer = [(11, 1), (21, 6.5), (21, 16.5), (11, 22), (1, 16.5), (1, 6.5), (11, 1)]
+    polygon(outer, (224, 189, 143, 255))
+    stroke(outer, ink, .9)
+    polygon([(11, 4), (18, 8), (18, 15), (11, 19), (4, 15), (4, 8)], (234, 236, 210, 255))
+    polygon([(11, 5.5), (16.5, 8.7), (11, 12), (5.5, 8.7)], (145, 170, 214, 255))
+    polygon([(5.5, 8.7), (11, 12), (11, 18), (5.5, 14.8)], (113, 141, 192, 255))
+    polygon([(11, 12), (16.5, 8.7), (16.5, 14.8), (11, 18)], (89, 119, 174, 255))
+    stroke([(5.5, 8.7), (11, 12), (16.5, 8.7)], ink, .7)
+    stroke([(11, 12), (11, 18)], ink, .7)
+    # The green check distinguishes stock checking from the upstream application.
+    polygon([(17, 14), (23, 14), (23, 21), (20, 23), (15, 20), (15, 16)], (32, 143, 94, 255))
+    stroke([(17, 18), (19, 20), (22, 16.5)], (255, 255, 255, 255), 1.5)
+    rows = []
+    for y in range(size):
+        row = []
+        for x in range(size):
+            samples = [pixels[y * scale + dy][x * scale + dx] for dy in range(scale) for dx in range(scale)]
+            alpha = sum(p[3] for p in samples)
+            row.extend([round(sum(p[c] * p[3] for p in samples) / alpha) if alpha else 0 for c in range(3)] + [round(alpha / (scale * scale))])
+        rows.append(b'\0' + bytes(row))
+    raw = b''.join(rows)
     def chunk(kind, data):
         return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)
-    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 24, 24, 8, 6, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 6, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
 
 
 def build(root=None):

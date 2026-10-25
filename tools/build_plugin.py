@@ -69,7 +69,7 @@ def icon_png(size=24):
 def build(root=None):
     root = Path(root) if root else Path(__file__).resolve().parents[1]
     metadata = json.loads((root / 'plugin/metadata.json').read_text(encoding='utf-8'))
-    output = root / 'dist' / ('inventree-bom-checker-' + metadata['versions'][0]['version'] + '.zip')
+    output = root / 'dist' / ('kistock-' + metadata['versions'][0]['version'] + '.zip')
     output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(output, 'w', ZIP_DEFLATED) as archive:
         archive.write(root / 'plugin/metadata.json', 'metadata.json')

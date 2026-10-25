@@ -36,7 +36,7 @@ def write_reports(output, source, results, parts, stock, boards):
     summary = ' · '.join(f'{state}: {count}' for state, count in sorted(Counter(r.status for r in results).items()))
     page = '''<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>BoM Checker · InvenTree</title><style>
+<title>KiStock · InvenTree</title><style>
 body{font:15px system-ui;margin:28px;color:#1c2939;background:#f5f7fb}h1{margin-bottom:6px}
 .card{background:white;border:1px solid #dce3ee;padding:18px;border-radius:10px;margin:16px 0}
 input{font:inherit;padding:10px;width: min(440px,85%);border:1px solid #a6b4c5;border-radius:6px}
@@ -45,7 +45,7 @@ th,td{text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid #e
 td:first-child{font-weight:bold;white-space:nowrap}.OK td:first-child{color:#19713c}.OK_EQUIVALENT td:first-child{color:#166b85}
 .SHORTAGE td:first-child,.PARTIAL td:first-child{color:#b33d19}.UNMAPPED td:first-child,.AMBIGUOUS td:first-child{color:#8b6811}
 small{color:#53657a}td{max-width:330px;overflow-wrap:anywhere}</style>
-<h1>BoM Checker <small>KiCad → InvenTree</small></h1>
+<h1>KiStock <small>KiCad → InvenTree</small></h1>
 '''
     page += f'<p>{esc(Path(source).name)} · {boards} boards · {esc(datetime.now().astimezone().isoformat(timespec="seconds"))}</p>'
     page += '<div class="card">' + esc(summary or 'Empty BOM') + '</div>'

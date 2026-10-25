@@ -1,15 +1,15 @@
 {
   "$schema": "https://go.kicad.org/pcm/schemas/v2",
-  "name": "InvenTree BoM Checker",
+  "name": "KiStock",
   "description": "Check stock, match parts with local AI, create Mouser carts and prepare InvenTree builds inside KiCad.",
   "description_full": "Native KiCad 9/10 stock checking, unified Settings, encrypted credentials, OpenAI-compatible and native Ollama endpoints. Review AI matches and exclusions, create Mouser carts from verified search candidates without ordering, and create InvenTree builds with exact PCB-lot allocation. KiCad 11 is not supported by this SWIG package.",
   "identifier": "local.inventree-bom-checker",
   "type": "plugin",
-  "author": {"name": "BoM Checker contributors", "contact": {}},
+  "author": {"name": "KiStock contributors", "contact": {}},
   "license": "MIT",
   "resources": {},
   "tags": ["bom", "inventory", "inventree"],
   "versions": [
-    {"version": "0.5.8", "status": "testing", "kicad_version": "9.0", "kicad_version_max": "10.99", "runtime": "swig"}
+    {"version": "0.6.0", "status": "testing", "kicad_version": "9.0", "kicad_version_max": "10.99", "runtime": "swig"}
   ]
 }

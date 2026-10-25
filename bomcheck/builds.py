@@ -171,7 +171,7 @@ def create_build(client, plan):
                     client.post('bom/substitute/', {'bom_item': bom[pk]['pk'], 'part': substitute})
         writes_started = True
         build = client.post('build/', {'part': plan.assembly['pk'], 'quantity': plan.boards, 'reference': plan.reference,
-                                      'title': 'KiCad PCB assembly', 'notes': f'Created by KiCad BoM Checker. Bare PCB stock lot: #{plan.pcb_stock_id}. Stock is allocated, not consumed.'})
+                                      'title': 'KiCad PCB assembly', 'notes': f'Created by KiStock. Bare PCB stock lot: #{plan.pcb_stock_id}. Stock is allocated, not consumed.'})
         lines = client.list('build/line/', build=build['pk'])
         line_ids = {line['bom_item']: line['pk'] for line in lines}
         payload = []

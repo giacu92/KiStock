@@ -1,10 +1,12 @@
-# InvenTree BoM Checker for KiCad
+# KiStock
+
+InvenTree inventory, AI-assisted BOM matching and sourcing for KiCad. Repository name: `kistock`.
 
 A native KiCad PCB Editor plugin that checks whether the components on your board are available in InvenTree, including approved equivalent parts. All interface text, reports and command-line messages are in English.
 
 ## Use inside KiCad
 
-The plugin is installed for KiCad 10 in your user plugin folder. Restart the **PCB Editor**, open a board, then choose **Tools > External Plugins > InvenTree BoM Checker**, or click its circuit/checkmark toolbar icon.
+The plugin is installed for KiCad 10 in your user plugin folder. Restart the **PCB Editor**, open a board, then choose **Tools > External Plugins > KiStock**, or click its cube/checkmark toolbar icon.
 
 1. Open **Settings → InvenTree** and enter the server URL and API token. Replace the example server URL with your own InvenTree server address. The token is masked. Enable **Remember token** and click **Save settings** to retain it across KiCad restarts using Windows account encryption. Uncheck the option and save to forget it.
 2. Choose the number of boards to assemble. Under **Settings → InvenTree**, enable **Treat direct related parts as approved equivalents** if your InvenTree related-part links represent valid substitutions.
@@ -17,13 +19,15 @@ The board snapshot comes from the currently open PCB, including unsaved componen
 
 ## Install or distribute
 
-The self-contained package is `dist/inventree-bom-checker-0.5.0.zip`. On another installation, open KiCad's **Plugin and Content Manager**, choose **Install from File**, select the ZIP and apply the installation. Restart the PCB Editor afterward.
+The self-contained package is `dist/kistock-0.6.0.zip`. On another installation, open KiCad's **Plugin and Content Manager**, choose **Install from File**, select the ZIP and apply the installation. Restart the PCB Editor afterward.
 
 Alternatively, on Windows run:
 
 ```powershell
 .\install_plugin.ps1 -KiCadVersion 10.0
 ```
+
+The existing internal package identifier and settings paths are retained for compatibility, so saved credentials and associations continue to work after renaming to KiStock.
 
 The installer writes only this plugin's folder under `%APPDATA%\kicad\10.0\scripting\plugins\inventree_bom_checker`. It does not modify KiCad's program files. Use one installation method to avoid duplicate menu entries. The local package is not published to the official plugin repository.
 

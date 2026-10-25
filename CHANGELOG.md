@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0 — KiStock
+
+- Rename the plugin, reports and release ZIP to KiStock (`kistock`).
+- Preserve internal installation identifiers and settings paths for seamless upgrades.
+
 ## 0.5.8 â€” Stock locations in the part picker
 
 - Show the selected part's full warehouse location paths and physical quantities in the association window.

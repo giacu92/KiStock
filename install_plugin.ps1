@@ -2,7 +2,7 @@ param([string]$KiCadVersion = '10.0')
 $ErrorActionPreference = 'Stop'
 if ($KiCadVersion -notin @('9.0', '10.0')) { throw 'This package supports KiCad 9.0 and 10.0 only.' }
 $metadata = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'plugin\metadata.json') -Raw | ConvertFrom-Json
-$archivePath = Join-Path $PSScriptRoot ("dist\inventree-bom-checker-" + $metadata.versions[0].version + '.zip')
+$archivePath = Join-Path $PSScriptRoot ("dist\kistock-" + $metadata.versions[0].version + '.zip')
 if (-not (Test-Path -LiteralPath $archivePath)) { throw 'Build the plugin first: python tools\build_plugin.py' }
 $pluginRoot = Join-Path $env:APPDATA "kicad\$KiCadVersion\scripting\plugins"
 $destination = [IO.Path]::GetFullPath((Join-Path $pluginRoot 'inventree_bom_checker'))
@@ -22,4 +22,4 @@ try {
     }
 } finally { $archive.Dispose() }
 Write-Host "Installed: $destination"
-Write-Host 'Restart the PCB Editor. Open Tools > External Plugins > InvenTree BoM Checker.'
+Write-Host 'Restart the PCB Editor. Open Tools > External Plugins > KiStock.'

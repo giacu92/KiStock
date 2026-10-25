@@ -326,7 +326,7 @@ def main():
         with patch.object(pcbnew.PYTHON_ACTION_PLUGINS, 'register_action') as register:
             spec.loader.exec_module(module)
             register.assert_called_once_with(module.plugin)
-        assert module.plugin.name == f'InvenTree BoM Checker {__version__}'
+        assert module.plugin.name == f'KiStock {__version__}'
         assert Path(module.plugin.icon_file_name).is_file()
         # The queued initial search must see the closed flag before doing work.
         wx.Yield()

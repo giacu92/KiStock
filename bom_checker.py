@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """@package
-BoM Checker: check InvenTree availability and related parts.
+KiStock: check InvenTree availability and related parts.
 Input: KiCad XML netlist, CSV or InteractiveHtmlBom HTML.
 KiCad BOM generator command:
 python "bom_checker.py" "%I" "%O-stock" --config "config.json" --open

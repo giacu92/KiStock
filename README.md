@@ -19,7 +19,7 @@ The board snapshot comes from the currently open PCB, including unsaved componen
 
 ## Install or distribute
 
-The self-contained package is `dist/kistock-0.6.0.zip`. On another installation, open KiCad's **Plugin and Content Manager**, choose **Install from File**, select the ZIP and apply the installation. Restart the PCB Editor afterward.
+The self-contained package is `dist/kistock-0.6.1.zip`. On another installation, open KiCad's **Plugin and Content Manager**, choose **Install from File**, select the ZIP and apply the installation. Restart the PCB Editor afterward.
 
 Alternatively, on Windows run:
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1 — Public repository privacy
+
+- Use a generic example server and installation paths instead of personal network/project data.
+- Remove private test-session details from documentation.
+- Preserve existing local settings and credentials; only new installations use the example URL.
+
 ## 0.6.0 — KiStock
 
 - Rename the plugin, reports and release ZIP to KiStock (`kistock`).

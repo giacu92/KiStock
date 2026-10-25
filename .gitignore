@@ -3,3 +3,9 @@ config.json
 reports/
 dist/
 *.local.json
+settings.json
+credentials.json
+carts/
+.env
+.env.*
+!.env.example

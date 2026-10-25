@@ -201,6 +201,28 @@ def main():
         saved_mappings = __import__('json').loads((root / 'settings.json').read_text())['mappings']
         assert saved_mappings == [{'value': 'Unrelated', 'footprint': 'Other', 'part_id': 5}]
         assert not restored.export.IsEnabled() and not restored.build_button.IsEnabled()
+        restored.on_toggle_skip()
+        assert restored.table.GetItemText(0) == 'SKIPPED'
+        assert restored.table.GetItemText(0, 4) == '0'
+        assert 0 in restored.combined_exclusions()
+        def inspect_skip_menu(menu):
+            assert any(item.GetItemLabelText() == 'Include component' for item in menu.GetMenuItems())
+        with patch.object(restored, 'PopupMenu', side_effect=inspect_skip_menu):
+            restored.on_row_menu(row_event)
+        skip_reopened = CheckerDialog(None, lines, 'test.kicad_pcb', root / 'settings.json')
+        assert skip_reopened.table.GetItemText(0) == 'SKIPPED'
+        skip_reopened.closed = True
+        skip_reopened.Destroy()
+        with patch('bomcheck.kicad.gui.analyze') as no_skipped_ai:
+            restored.on_ai()
+            no_skipped_ai.assert_not_called()
+        with patch.object(restored, 'on_check'):
+            restored.on_reset_exclusions(None)
+        assert restored.skips == {0}
+        restored.table.Select(0)
+        restored.on_toggle_skip()
+        assert restored.table.GetItemText(0) == 'UNMAPPED'
+        assert not restored.skips
         restored.closed = True
         restored.Destroy()
         settings_dialog = AISettings(dialog, {}, root / 'settings.json')

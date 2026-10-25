@@ -41,7 +41,7 @@ class BuildPlan:
 def requirements_from_results(results, boards, pcb_part):
     required, picks, substitutes = {}, defaultdict(lambda: defaultdict(int)), defaultdict(set)
     for row in results:
-        if row.status == 'EXCLUDED_AI':
+        if row.status in ('EXCLUDED_AI', 'SKIPPED'):
             continue
         if row.status not in ('OK', 'OK_EQUIVALENT') or not row.primary or row.missing:
             raise ValueError('All physical BOM rows must be associated and fully covered before creating a build.')

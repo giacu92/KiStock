@@ -16,7 +16,7 @@ from ..inputs import read_bom
 from ..inventree import InvenTree
 from ..report import label, write_reports
 from ..version import __version__
-from .settings import assign, load_settings, save_settings, settings_path
+from .settings import assign, load_settings, save_settings, settings_path, skipped_rows, set_component_skipped
 from .credentials import credential_key, load_secret, save_secret
 
 
@@ -164,6 +164,7 @@ class CheckerDialog(wx.Dialog):
         self.settings_file = Path(settings_file) if settings_file else settings_path()
         self.config = load_settings(self.settings_file)
         self.exclusions = {}
+        self.skips = skipped_rows(self.config, self.source, self.lines)
         self.ai_key = ''
         self.focus_row = None
         self.credential_error = ''
@@ -271,8 +272,10 @@ class CheckerDialog(wx.Dialog):
             association = identity(line, self.config)
             status = result.status if result else ('ASSOCIATED' if association else 'UNMAPPED')
             required = result.required if result else line.quantity * self.boards.GetValue()
+            if not result and i in self.skips:
+                status, required = 'SKIPPED', 0
             pick = '; '.join(f'{label(self.parts[pk])}: {qty}' for pk, qty in result.used.items()) if result else ''
-            if not result and association:
+            if not result and association and i not in self.skips:
                 kind, code = association
                 saved = next((m.get('part_label') for m in self.config.get('mappings', [])
                               if m['value'] == line.value and m['footprint'] == line.footprint), '')
@@ -280,7 +283,8 @@ class CheckerDialog(wx.Dialog):
             if result and not pick and result.primary:
                 pick = label(result.primary)
             values = [status, line.refs, line.value, line.footprint, required,
-                      sum(result.used.values()) if result else '—', result.missing if result else '—', pick]
+                      sum(result.used.values()) if result else (0 if i in self.skips else '—'),
+                      result.missing if result else (0 if i in self.skips else '—'), pick]
             index = self.table.InsertItem(i, str(values[0]))
             for column, value in enumerate(values[1:], 1):
                 self.table.SetItem(index, column, str(value))
@@ -288,6 +292,8 @@ class CheckerDialog(wx.Dialog):
                 self.table.SetItemTextColour(index, wx.Colour(20, 110, 65))
             elif status in ('SHORTAGE', 'PARTIAL'):
                 self.table.SetItemTextColour(index, wx.Colour(170, 60, 20))
+            elif status == 'SKIPPED':
+                self.table.SetItemTextColour(index, wx.Colour(115, 115, 115))
 
     def controls_config(self):
         return copy.deepcopy(self.config)
@@ -359,7 +365,7 @@ class CheckerDialog(wx.Dialog):
         for control in (self.run, self.import_button, self.associate, self.boards, self.settings_button, self.ai_button, self.reset_exclusions, self.mouser_button):
             control.Enable(not busy)
         self.export.Enable(not busy and self.results is not None)
-        self.build_button.Enable(not busy and bool(self.results) and all(r.status in ('OK', 'OK_EQUIVALENT', 'EXCLUDED_AI') for r in self.results))
+        self.build_button.Enable(not busy and bool(self.results) and all(r.status in ('OK', 'OK_EQUIVALENT', 'EXCLUDED_AI', 'SKIPPED') for r in self.results))
 
     def on_cancel_ai(self, event=None):
         if self.ai_cancel_event is None:
@@ -413,7 +419,7 @@ class CheckerDialog(wx.Dialog):
             counts = Counter(row.status for row in self.results)
             self.status.SetLabel(' | '.join(f'{state}: {count}' for state, count in sorted(counts.items())))
             self.set_busy(False)
-        background(self, lambda: check(self.lines, client, config, boards, self.exclusions), done)
+        background(self, lambda: check(self.lines, client, config, boards, self.exclusions, self.skips), done)
 
     def on_import(self, event):
         with wx.FileDialog(self, 'Import a BOM', wildcard='BOM files (*.csv;*.html;*.xml)|*.csv;*.html;*.xml', style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
@@ -425,6 +431,7 @@ class CheckerDialog(wx.Dialog):
                     raise ValueError('The BOM contains no populated components.')
                 self.lines, self.source = lines, dialog.GetPath()
                 self.exclusions = {}
+                self.skips = skipped_rows(self.config, self.source, self.lines)
                 self.focus_row = None
                 self.source_label.SetLabel('Source: ' + self.source)
                 self.results = None
@@ -456,6 +463,9 @@ class CheckerDialog(wx.Dialog):
             wx.MessageBox('Select a BOM row first.', 'Associate part')
             return
         line = self.lines[index]
+        if index in self.skips:
+            self.status.SetLabel('This component is skipped. Right-click and choose Include component before associating it.')
+            return
         try:
             config = self.controls_config()
             # Explicit design identifiers take precedence over value/package maps.
@@ -498,13 +508,48 @@ class CheckerDialog(wx.Dialog):
         associate = menu.Append(wx.ID_ANY, 'Associate with an InvenTree part…')
         remove = menu.Append(wx.ID_ANY, 'Remove association')
         remove.Enable(saved and not explicit)
-        associate.Enable(not explicit)
+        associate.Enable(not explicit and index not in self.skips)
+        menu.AppendSeparator()
+        skip = menu.Append(wx.ID_ANY, 'Include component' if index in self.skips or index in self.exclusions else 'Skip component')
         menu.Bind(wx.EVT_MENU, self.on_associate, associate)
         menu.Bind(wx.EVT_MENU, self.on_remove_association, remove)
+        menu.Bind(wx.EVT_MENU, self.on_toggle_skip, skip)
         try:
             self.PopupMenu(menu)
         finally:
             menu.Destroy()
+
+    def on_toggle_skip(self, event=None):
+        if self.busy:
+            return
+        index = self.table.GetFirstSelected()
+        if not 0 <= index < len(self.lines):
+            return
+        try:
+            skipping = index not in self.skips and index not in self.exclusions
+            config = self.controls_config()
+            set_component_skipped(config, self.source, self.lines[index], skipping)
+            save_settings(self.settings_file, config)
+            self.config = config
+            if skipping:
+                self.skips.add(index)
+            else:
+                self.skips.discard(index)
+                self.exclusions.pop(index, None)
+            self.results = None
+            self.focus_row = index
+            self.details.SetValue('Skipped components are omitted from stock checks, AI matching, build orders and Mouser carts. Saved associations are preserved.')
+            self.paint_rows()
+            self.table.Select(index)
+            self.set_busy(False)
+            self.status.SetLabel('Component skipped.' if skipping else 'Component included again.')
+            if self.inventory_token:
+                self.on_check(automatic=True)
+        except Exception as error:
+            wx.MessageBox(str(error), 'Cannot update skipped component', wx.OK | wx.ICON_ERROR)
+
+    def combined_exclusions(self):
+        return {**self.exclusions, **{index: 'Skipped manually' for index in self.skips}}
 
     def on_remove_association(self, event=None):
         if self.busy:
@@ -541,7 +586,7 @@ class CheckerDialog(wx.Dialog):
     def on_ai(self, event=None):
         if self.busy:
             return
-        if not any(not identity(line, self.config) and i not in self.exclusions for i, line in enumerate(self.lines)):
+        if not any(not identity(line, self.config) and i not in self.combined_exclusions() for i, line in enumerate(self.lines)):
             self.status.SetLabel('No unassociated rows to review. Existing associations and exclusions were kept.')
             return
         if not self.config.get('ai', {}).get('base_url') and not self.on_ai_settings():
@@ -561,7 +606,7 @@ class CheckerDialog(wx.Dialog):
             return
         self.set_busy(True, 'AI Assist', cancellable=True)
         cancel_event = self.ai_cancel_event
-        lines, exclusions = copy.deepcopy(self.lines), dict(self.exclusions)
+        lines, exclusions = copy.deepcopy(self.lines), self.combined_exclusions()
         self.status.SetLabel('AI Assist is reviewing unassociated rows only. Existing associations are preserved.')
         def operation():
             proposals, catalog = analyze(lines, inventory, config, ai, boards, exclusions, cancel_event)
@@ -621,7 +666,7 @@ class CheckerDialog(wx.Dialog):
             return
         self.set_busy(True, 'Preparing Mouser cart', cancellable=True)
         cancel_event = self.ai_cancel_event
-        lines, exclusions = copy.deepcopy(self.lines), dict(self.exclusions)
+        lines, exclusions = copy.deepcopy(self.lines), self.combined_exclusions()
         self.status.SetLabel('Searching Mouser and asking the configured AI to select verified candidates. No cart has been created yet.')
         def done(rows, error):
             if cancel_event.is_set():

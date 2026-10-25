@@ -95,11 +95,16 @@ def distribute(results, stock):
             row.status = 'OK'
 
 
-def check(lines, client, config, boards=1, exclusions=None):
+def check(lines, client, config, boards=1, exclusions=None, skipped=None):
     results, parts, stock = [], {}, {}
     for index, line in enumerate(lines):
         row = Result(line, line.quantity * boards)
         results.append(row)
+        if index in (skipped or set()):
+            row.required = 0
+            row.status = 'SKIPPED'
+            row.note = f'Skipped manually (original requirement: {line.quantity * boards}). Include this component from the row context menu to restore it.'
+            continue
         if index in (exclusions or {}):
             row.required = 0
             row.status = 'EXCLUDED_AI'

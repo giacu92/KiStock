@@ -111,6 +111,19 @@ class AIValidationTests(unittest.TestCase):
         self.assertIn('original requirement: 5', rows[0].note)
         self.assertFalse(stock)
 
+    def test_manual_skip_ignores_even_explicit_parts_and_uses_no_stock(self):
+        client = MagicMock()
+        line = Line('H1', 'Hole', 'MountingHole', 1, {'IPN': 'P1'})
+        rows, parts, stock = check([line], client, {}, 5, skipped={0})
+        self.assertEqual(rows[0].status, 'SKIPPED')
+        self.assertEqual(rows[0].required, 0)
+        self.assertEqual(rows[0].missing, 0)
+        self.assertEqual(rows[0].used, {})
+        self.assertIn('original requirement: 5', rows[0].note)
+        self.assertFalse(parts or stock)
+        client.find.assert_not_called()
+        client.available.assert_not_called()
+
 
 class TransportTests(unittest.TestCase):
     def test_exhausted_or_unknown_stock_proposal_stays_unresolved(self):

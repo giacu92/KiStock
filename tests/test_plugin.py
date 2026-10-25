@@ -12,12 +12,29 @@ from bomcheck.checker import identity
 from bomcheck.config import load_config
 from bomcheck.inputs import Line
 from bomcheck.inventree import InvenTree
-from bomcheck.kicad.settings import assign, load_settings, save_settings
+from bomcheck.kicad.settings import assign, load_settings, save_settings, skipped_rows, set_component_skipped
 from bomcheck.kicad.credentials import credential_key, load_secret, save_secret
 from tools.build_plugin import build
 
 
 class SettingsTests(unittest.TestCase):
+    def test_skips_survive_reload_and_reordering_without_leaking_to_other_projects(self):
+        first = Line('H2, H1', 'Mounting hole', 'Hole', 2, {})
+        other = Line('R1', '10k', 'R0603', 1, {})
+        config = {'url': 'http://inventory.test'}
+        set_component_skipped(config, 'example.kicad_pcb', first, True)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'settings.json'
+            save_settings(path, config)
+            restored = load_settings(path)
+        reordered = Line('H1, H2', 'Mounting hole', 'Hole', 2, {})
+        self.assertEqual(skipped_rows(restored, 'example.kicad_pcb', [other, reordered]), {1})
+        self.assertEqual(skipped_rows(restored, 'other.kicad_pcb', [first]), set())
+        self.assertNotIn('example.kicad_pcb', json.dumps(restored))
+        set_component_skipped(restored, 'example.kicad_pcb', first, False)
+        self.assertEqual(skipped_rows(restored, 'example.kicad_pcb', [first]), set())
+        set_component_skipped(restored, 'Unsaved PCB', first, True)
+        self.assertFalse(restored['skipped_components'])
     @unittest.skipUnless(os.name == 'nt', 'Windows DPAPI')
     def test_saved_token_survives_process_restart_and_can_be_removed(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -59,6 +59,13 @@ def results(server, substitute=False):
 
 
 class BuildTests(unittest.TestCase):
+    def test_skipped_components_do_not_enter_build_requirements(self):
+        server = Server()
+        rows = results(server)
+        rows.append(Result(Line('LOGO1', 'Logo', 'Artwork', 1, {}), 0, status='SKIPPED'))
+        from bomcheck.builds import requirements_from_results
+        required, _, _ = requirements_from_results(rows, 2, server.parts[3])
+        self.assertEqual(set(required), {2, 3})
     def plan(self, server, rows=None):
         return prepare_build(server, rows or results(server), 1, 3, 30, 2, 'BO-001')
 

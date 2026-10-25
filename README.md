@@ -15,11 +15,13 @@ The plugin is installed for KiCad 10 in your user plugin folder. Restart the **P
 5. Availability refreshes automatically after **Use selected part**, and the selected row is populated. Shared stock is recalculated across the whole BOM. Associations are saved locally and reused for rows with the same value and footprint that have no explicit IPN/MPN.
 6. Optionally use **Export HTML + CSV** to save a report, or **Import CSV / iBOM / XML** to check an existing export instead of the current board.
 
+Right-click a BOM row and choose **Skip component** for logos, holes, DNP items or anything you want to omit. Skipped rows stay visible as **SKIPPED**, require zero stock and are omitted from AI matching, build requirements and Mouser carts. Choose **Include component** to restore the row; saved inventory associations are preserved. Manual skips are remembered per source file and survive row reordering. Unsaved PCBs keep skips only for the current session. **Reset AI exclusions** does not clear manual skips.
+
 The board snapshot comes from the currently open PCB, including unsaved component changes. DNP and excluded-from-BOM footprints are skipped. Fields such as IPN and MPN must be present on the PCB footprints; update the PCB from the schematic if those fields only exist in the schematic. The plugin never modifies the KiCad design. Inventory changes are limited to the explicit build-order workflow described below. Reopen the plugin after changing the board.
 
 ## Install or distribute
 
-The self-contained package is `dist/kistock-0.6.1.zip`. On another installation, open KiCad's **Plugin and Content Manager**, choose **Install from File**, select the ZIP and apply the installation. Restart the PCB Editor afterward.
+The self-contained package is `dist/kistock-0.6.2.zip`. On another installation, open KiCad's **Plugin and Content Manager**, choose **Install from File**, select the ZIP and apply the installation. Restart the PCB Editor afterward.
 
 Alternatively, on Windows run:
 

@@ -1,7 +1,7 @@
 import io
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from bomcheck.ai import CompatibleAI
 from bomcheck.inputs import Line
@@ -12,6 +12,13 @@ PART = {'MouserPartNumber': '123-RES10K', 'ManufacturerPartNumber': 'RES10K', 'A
 
 
 class MouserTests(unittest.TestCase):
+    def test_skipped_components_are_not_searched_or_added(self):
+        client, ai = MagicMock(), MagicMock()
+        rows = prepare_cart([Line('LOGO1', 'Logo', 'Artwork', 1, {})], {0: 'Skipped manually'}, 1, client, ai)
+        self.assertEqual(rows, [])
+        client.search.assert_not_called()
+        ai.complete.assert_not_called()
+        client.create_cart.assert_not_called()
     def test_search_normalizes_eagle_ids_but_preserves_explicit_mpn(self):
         line = Line('R1', '4k7', 'R0603_38612003', 1, {})
         self.assertEqual(search_query(line), '4.7k 0603')

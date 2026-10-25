@@ -79,6 +79,14 @@ def main():
                 finished(None, str(error))
             else:
                 finished(result, None)
+        with patch('bomcheck.kicad.gui.InvenTree', return_value=DemoInventory()), \
+             patch('bomcheck.kicad.gui.background') as queued_check:
+            dialog.on_check()
+            assert dialog.activity_timer.IsRunning() and dialog.activity_bar.IsShown()
+            assert 'Checking availability' in dialog.activity_text.GetLabel()
+            window, operation, finished = queued_check.call_args.args
+            immediate(window, operation, finished)
+            assert not dialog.activity_timer.IsRunning() and not dialog.activity_bar.IsShown()
         with patch('bomcheck.kicad.gui.InvenTree', return_value=DemoInventory()), patch('bomcheck.kicad.gui.background', side_effect=immediate):
             dialog.on_check()
         assert dialog.table.GetItemText(0) == 'OK_EQUIVALENT', dialog.table.GetItemText(0)
@@ -140,6 +148,31 @@ def main():
         with patch('bomcheck.kicad.gui.analyze') as no_ai:
             restored.on_ai()
             no_ai.assert_not_called()
+        restored.table.Select(0)
+        row_event = MagicMock()
+        row_event.GetIndex.return_value = 0
+        def inspect_menu(menu):
+            remove = next(item for item in menu.GetMenuItems() if item.GetItemLabelText() == 'Remove association')
+            assert remove.IsEnabled()
+        with patch.object(restored, 'PopupMenu', side_effect=inspect_menu):
+            restored.on_row_menu(row_event)
+        removal_picker = PartPicker(restored, inv, lines[0], can_remove=True)
+        with patch.object(removal_picker, 'EndModal') as end_modal:
+            removal_picker.on_remove(None)
+            end_modal.assert_called_once_with(wx.ID_DELETE)
+        removal_picker.Destroy()
+        restored.config['mappings'].append({'value': 'Unrelated', 'footprint': 'Other', 'part_id': 5})
+        restored.inventory_token = ''
+        removed = MagicMock()
+        removed.ShowModal.return_value = wx.ID_DELETE
+        with patch('bomcheck.kicad.gui.PartPicker', return_value=removed) as picker_class, \
+             patch.object(restored, 'client', return_value=inv):
+            restored.on_associate(None)
+        assert picker_class.call_args.kwargs['can_remove']
+        assert restored.table.GetItemText(0) == 'UNMAPPED'
+        saved_mappings = __import__('json').loads((root / 'settings.json').read_text())['mappings']
+        assert saved_mappings == [{'value': 'Unrelated', 'footprint': 'Other', 'part_id': 5}]
+        assert not restored.export.IsEnabled() and not restored.build_button.IsEnabled()
         restored.closed = True
         restored.Destroy()
         settings_dialog = AISettings(dialog, {}, root / 'settings.json')

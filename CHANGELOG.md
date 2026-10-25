@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.5 — Remove saved associations
+
+- Remove a local value/footprint association from the row context menu or the association picker.
+- Save removal immediately and invalidate availability results shared across rows; refresh stock when credentials are available.
+- Protect explicit design IPN/MPN fields, which remain editable in KiCad.
+- Label the activity indicator with the running operation, including Check availability.
+
 ## 0.5.4 — Visible background activity
 
 - Show an animated activity bar and elapsed time during AI Assist, Mouser preparation and availability checks.

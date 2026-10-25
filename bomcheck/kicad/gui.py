@@ -34,7 +34,7 @@ def background(window, operation, finished):
 
 
 class PartPicker(wx.Dialog):
-    def __init__(self, parent, client, line, filters=None):
+    def __init__(self, parent, client, line, filters=None, can_remove=False):
         super().__init__(parent, title='Associate with an InvenTree part', size=(990, 530), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.closed, self.parts, self.selected = False, [], None
         self.client = client
@@ -54,6 +54,11 @@ class PartPicker(wx.Dialog):
         layout.Add(self.list, 1, wx.EXPAND | wx.ALL, 12)
         self.status = wx.StaticText(self, label='Enter a search term, then select a result.')
         layout.Add(self.status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        self.remove_association = wx.Button(self, label='Remove current association')
+        self.remove_association.Enable(can_remove)
+        self.remove_association.SetToolTip('Remove the saved association for this value and footprint from local memory.')
+        self.remove_association.Bind(wx.EVT_BUTTON, self.on_remove)
+        layout.Add(self.remove_association, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
         buttons = self.CreateButtonSizer(wx.OK | wx.CANCEL)
         layout.Add(buttons, 0, wx.EXPAND | wx.ALL, 12)
         self.SetSizer(layout)
@@ -116,6 +121,11 @@ class PartPicker(wx.Dialog):
     def on_close(self, event):
         self.closed = True
         event.Skip()
+
+    def on_remove(self, event):
+        if self.remove_association.IsEnabled():
+            self.closed = True
+            self.EndModal(wx.ID_DELETE)
 
 
 class CheckerDialog(wx.Dialog):
@@ -204,6 +214,7 @@ class CheckerDialog(wx.Dialog):
         self.mouser_button.Bind(wx.EVT_BUTTON, self.on_mouser)
         self.table.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_selection)
         self.table.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.on_associate)
+        self.table.Bind(wx.EVT_LIST_ITEM_RIGHT_CLICK, self.on_row_menu)
         self.Bind(wx.EVT_BUTTON, self.on_close, id=wx.ID_CLOSE)
         self.Bind(wx.EVT_CLOSE, self.on_close)
         self.paint_rows()
@@ -296,9 +307,10 @@ class CheckerDialog(wx.Dialog):
             raise ValueError('Enter an InvenTree API token under Settings → InvenTree first.')
         return InvenTree(config['url'], self.inventory_token)
 
-    def set_busy(self, busy):
+    def set_busy(self, busy, operation='Working'):
         self.busy = busy
         if busy:
+            self.activity_operation = operation
             self.activity_started = time.monotonic()
             self.activity_bar.Show()
             self.activity_text.Show()
@@ -319,7 +331,7 @@ class CheckerDialog(wx.Dialog):
             return
         self.activity_bar.Pulse()
         elapsed = int(time.monotonic() - self.activity_started)
-        self.activity_text.SetLabel(f'Working… {elapsed // 60}:{elapsed % 60:02d} elapsed')
+        self.activity_text.SetLabel(f'{self.activity_operation}… {elapsed // 60}:{elapsed % 60:02d} elapsed')
 
     def on_check(self, event=None, automatic=False):
         if self.closed or self.busy:
@@ -341,7 +353,7 @@ class CheckerDialog(wx.Dialog):
         self.config = config
         self.details.SetValue('')
         self.paint_rows()
-        self.set_busy(True)
+        self.set_busy(True, 'Checking availability')
         self.status.SetLabel(f'Checking {len(self.lines)} BOM groups against InvenTree…')
         def done(value, error):
             if error:
@@ -408,9 +420,14 @@ class CheckerDialog(wx.Dialog):
             key = identity(line, {**config, 'mappings': []})
             if key:
                 raise ValueError('This row already has an explicit IPN/MPN. Correct that field in the design or export before associating by value and footprint.')
-            picker = PartPicker(self, self.client(config), line)
+            can_remove = any(m['value'] == line.value and m['footprint'] == line.footprint for m in config.get('mappings', []))
+            picker = PartPicker(self, self.client(config), line, can_remove=can_remove)
             try:
-                if picker.ShowModal() != wx.ID_OK:
+                outcome = picker.ShowModal()
+                if outcome == wx.ID_DELETE:
+                    self.on_remove_association()
+                    return
+                if outcome != wx.ID_OK:
                     return
                 assign(config, line, picker.selected)
                 save_settings(self.settings_file, config)
@@ -423,6 +440,58 @@ class CheckerDialog(wx.Dialog):
             self.on_check()
         except Exception as error:
             wx.MessageBox(str(error), 'Cannot associate part', wx.OK | wx.ICON_ERROR)
+
+    def on_row_menu(self, event):
+        if self.busy:
+            return
+        index = event.GetIndex()
+        if not 0 <= index < len(self.lines):
+            return
+        self.table.Select(index)
+        line = self.lines[index]
+        explicit = identity(line, {**self.config, 'mappings': []})
+        saved = any(m['value'] == line.value and m['footprint'] == line.footprint
+                    for m in self.config.get('mappings', []))
+        menu = wx.Menu()
+        associate = menu.Append(wx.ID_ANY, 'Associate with an InvenTree part…')
+        remove = menu.Append(wx.ID_ANY, 'Remove association')
+        remove.Enable(saved and not explicit)
+        associate.Enable(not explicit)
+        menu.Bind(wx.EVT_MENU, self.on_associate, associate)
+        menu.Bind(wx.EVT_MENU, self.on_remove_association, remove)
+        try:
+            self.PopupMenu(menu)
+        finally:
+            menu.Destroy()
+
+    def on_remove_association(self, event=None):
+        if self.busy:
+            return
+        index = self.table.GetFirstSelected()
+        if not 0 <= index < len(self.lines):
+            return
+        line = self.lines[index]
+        try:
+            config = self.controls_config()
+            if identity(line, {**config, 'mappings': []}):
+                raise ValueError('This association comes from an IPN/MPN in the design. Edit that field in KiCad to remove it.')
+            mappings = config.get('mappings', [])
+            remaining = [m for m in mappings if (m['value'], m['footprint']) != (line.value, line.footprint)]
+            if len(remaining) == len(mappings):
+                return
+            config['mappings'] = remaining
+            save_settings(self.settings_file, config)
+            self.config, self.results = config, None
+            self.focus_row = index
+            self.details.SetValue('Removed the saved association for this value and footprint, including other rows that share it.')
+            self.paint_rows()
+            self.table.Select(index)
+            self.set_busy(False)
+            self.status.SetLabel('Association removed from local memory. This component can be associated again manually or by AI.')
+            if self.inventory_token:
+                self.on_check(automatic=True)
+        except Exception as error:
+            wx.MessageBox(str(error), 'Cannot remove association', wx.OK | wx.ICON_ERROR)
 
     def on_ai_settings(self, event=None):
         return self.on_settings(page=1)
@@ -448,7 +517,7 @@ class CheckerDialog(wx.Dialog):
         except Exception as error:
             wx.MessageBox(str(error), 'Cannot start AI Assist', wx.OK | wx.ICON_ERROR)
             return
-        self.set_busy(True)
+        self.set_busy(True, 'AI Assist')
         self.status.SetLabel('AI Assist is reviewing unassociated rows only. Existing associations are preserved.')
         def operation():
             proposals, catalog = analyze(self.lines, inventory, config, ai, boards, self.exclusions)
@@ -503,7 +572,7 @@ class CheckerDialog(wx.Dialog):
         except Exception as error:
             wx.MessageBox(str(error), 'Cannot prepare Mouser cart', wx.OK | wx.ICON_ERROR)
             return
-        self.set_busy(True)
+        self.set_busy(True, 'Preparing Mouser cart')
         self.status.SetLabel('Searching Mouser and asking the configured AI to select verified candidates. No cart has been created yet.')
         def done(rows, error):
             self.set_busy(False)

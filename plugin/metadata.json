@@ -10,6 +10,6 @@
   "resources": {},
   "tags": ["bom", "inventory", "inventree"],
   "versions": [
-    {"version": "0.5.4", "status": "testing", "kicad_version": "9.0", "kicad_version_max": "10.99", "runtime": "swig"}
+    {"version": "0.5.5", "status": "testing", "kicad_version": "9.0", "kicad_version_max": "10.99", "runtime": "swig"}
   ]
 }

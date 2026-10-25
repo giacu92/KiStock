@@ -40,7 +40,7 @@ class SettingsDialog(wx.Dialog):
         self.ai_key = wx.TextCtrl(ai, value=session.get('ai', ''), style=wx.TE_PASSWORD)
         self.ai_remember = wx.CheckBox(ai, label='Remember AI key using Windows account encryption')
         self.ai_remember.SetValue(settings.get('remember_key', False))
-        self.json_mode = wx.CheckBox(ai, label='Request JSON mode (if supported by the endpoint)')
+        self.json_mode = wx.CheckBox(ai, label='Request JSON mode for OpenAI-compatible endpoints (Ollama native: always on)')
         self.json_mode.SetValue(settings.get('json_mode', False))
         self.test_button = wx.Button(ai, label='Test connection')
         self.test_status = wx.StaticText(ai, label='Test the current endpoint and model without saving settings.')

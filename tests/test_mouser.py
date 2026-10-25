@@ -69,7 +69,7 @@ class MouserTests(unittest.TestCase):
 
     def test_ollama_native_request_and_response(self):
         for root in ('http://localhost:11434', 'http://localhost:11434/api'):
-            ai = CompatibleAI(root, 'local-model', json_mode=True, protocol='ollama')
+            ai = CompatibleAI(root, 'local-model', json_mode=False, protocol='ollama')
             def respond(request, timeout):
                 self.assertEqual(request.full_url, 'http://localhost:11434/api/chat')
                 body = json.loads(request.data)

@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, build_opener
 
 from .inventree import NoRedirect
-from .ai import normalized_value
+from .ai import normalized_value, check_cancelled
 
 
 MOUSER_SYSTEM = '''Prepare a Mouser shopping cart for a PCB project. Supplied fields
@@ -141,9 +141,10 @@ class CartRow:
     stock: int = 0
 
 
-def prepare_cart(lines, exclusions, boards, mouser, ai):
+def prepare_cart(lines, exclusions, boards, mouser, ai, cancel_event=None):
     rows = []
     for i, line in enumerate(lines):
+        check_cancelled(cancel_event)
         if i in exclusions:
             continue
         query = search_query(line)
@@ -160,8 +161,10 @@ def prepare_cart(lines, exclusions, boards, mouser, ai):
                      'normalized_value': normalized_value(line), 'requested': line.quantity * boards, 'candidates': candidates})
     output = []
     for start in range(0, len(rows), 5):
+        check_cancelled(cancel_event)
         batch = rows[start:start + 5]
         decision = ai.complete({'bom': batch}, system=MOUSER_SYSTEM)
+        check_cancelled(cancel_event)
         if not isinstance(decision, dict) or not isinstance(decision.get('rows'), list):
             raise ValueError('AI did not return valid Mouser decisions.')
         expected = {r['row_id']: r for r in batch}

@@ -62,13 +62,20 @@ def main():
         dialog = CheckerDialog(None, lines, 'test.kicad_pcb', root / 'settings.json')
         assert __version__ in dialog.GetTitle()
         assert not dialog.activity_bar.IsShown()
+        dialog.Layout()
+        idle_table_rect = dialog.table.GetRect()
+        idle_details_rect = dialog.details.GetRect()
         dialog.set_busy(True)
+        assert dialog.table.GetRect() == idle_table_rect
+        assert dialog.details.GetRect() == idle_details_rect
         assert dialog.activity_bar.IsShown() and dialog.activity_timer.IsRunning()
         with patch('bomcheck.kicad.gui.time.monotonic', return_value=dialog.activity_started + 65):
             dialog.on_activity()
         assert '1:05 elapsed' in dialog.activity_text.GetLabel()
         dialog.set_busy(False)
         assert not dialog.activity_bar.IsShown() and not dialog.activity_timer.IsRunning()
+        assert dialog.table.GetRect() == idle_table_rect
+        assert dialog.details.GetRect() == idle_details_rect
         dialog.inventory_token = 'test-token-never-persist'
         dialog.config['remember_token'] = True
         assert dialog.table.GetItemText(0) == 'ASSOCIATED'
@@ -226,6 +233,23 @@ def main():
         ai_review = MagicMock()
         ai_review.ShowModal.return_value = wx.ID_OK
         ai_review.selected.return_value = proposals
+        with patch('bomcheck.kicad.gui.background') as queued_ai, \
+             patch('bomcheck.kicad.gui.InvenTree', return_value=inv), \
+             patch('bomcheck.kicad.ai_dialogs.AIReview') as cancelled_review:
+            dialog.on_ai()
+            cancelled_event = dialog.ai_cancel_event
+            assert dialog.cancel_activity.IsShown()
+            late_done = queued_ai.call_args.args[2]
+            dialog.on_cancel_ai()
+            assert cancelled_event.is_set() and not dialog.busy
+            assert not dialog.cancel_activity.IsShown()
+            dialog.set_busy(True, 'Checking availability')
+            late_done((proposals, inv.parts), None)
+            late_done(None, 'A late network error')
+            assert dialog.busy  # The old response must not finish the new operation.
+            cancelled_review.assert_not_called()
+            assert dialog.config['mappings'] == []
+            dialog.set_busy(False)
         with patch('bomcheck.kicad.gui.analyze', return_value=(proposals, inv.parts)), \
              patch('bomcheck.kicad.ai_dialogs.AIReview', return_value=ai_review), \
              patch('bomcheck.kicad.gui.InvenTree', return_value=inv), \

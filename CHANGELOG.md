@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.6 — Cancel AI and keep the layout steady
+
+- Add Cancel beside the activity bar during AI Assist and Mouser preparation; discard late responses and stop further batches.
+- Reserve the activity controls' space so showing/hiding them does not move the table or details.
+- Always request JSON from Ollama native; accept one JSON object inside common text/Markdown wrappers and report malformed/empty responses clearly.
+- Preserve strict validation of inventory matches; cancellation applies no proposals or cart writes.
+
 ## 0.5.5 — Remove saved associations
 
 - Remove a local value/footprint association from the row context menu or the association picker.

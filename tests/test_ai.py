@@ -1,10 +1,11 @@
 import io
 import json
 import unittest
+import threading
 from decimal import Decimal
 from unittest.mock import patch, MagicMock
 
-from bomcheck.ai import CompatibleAI, Proposal, analyze, apply_proposals, validate_decisions, normalized_value
+from bomcheck.ai import CompatibleAI, Proposal, analyze, apply_proposals, validate_decisions, normalized_value, parse_decision, AICancelled
 from bomcheck.checker import check, identity
 from bomcheck.inputs import Line
 
@@ -17,6 +18,33 @@ CATALOG = {17: {'pk': 17, 'IPN': '', 'name': '10k 0603 resistor', 'active': True
 
 
 class AIValidationTests(unittest.TestCase):
+    def test_json_formatting_wrappers_are_accepted_without_repair(self):
+        for text in (' {"rows": []} ', '```json\n{"rows": []}\n```',
+                     'Here is the result:\n```json\n{"rows": []}\n```',
+                     '<think>Reasoning text</think>\n{"rows": []}',
+                     'Result: {"rows": []}\nDone.'):
+            self.assertEqual(parse_decision(text), {'rows': []})
+        for text in ('', 'No result', '{"rows": [', '{"rows": [],}', '{"rows": []} {"rows": []}'):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                parse_decision(text)
+
+    def test_cancelled_analysis_makes_no_requests_and_discards_late_response(self):
+        event = threading.Event()
+        event.set()
+        inventory, ai = MagicMock(), MagicMock()
+        with self.assertRaises(AICancelled):
+            analyze([row()], inventory, {}, ai, cancel_event=event)
+        inventory.list.assert_not_called()
+        event.clear()
+        inventory.list.return_value = [dict(CATALOG[17])]
+        inventory.available.return_value = Decimal(10)
+        def late_response(payload):
+            event.set()
+            return {'rows': [{'row_id': 0, 'action': 'match', 'part_id': 17, 'confidence': 1, 'reason': 'Late'}]}
+        ai.complete.side_effect = late_response
+        with self.assertRaises(AICancelled):
+            analyze([row()], inventory, {}, ai, cancel_event=event)
+
     def test_engineering_value_equivalence(self):
         for values in [('4k7', '4.7k', '4700'), ('1M', '1000k')]:
             normalized = [normalized_value(row(value=v)) for v in values]

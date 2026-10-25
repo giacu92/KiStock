@@ -91,6 +91,35 @@ def shortlist(line, parts, limit=8):
     return sorted(parts, key=score, reverse=True)[:limit]
 
 
+class AICancelled(ValueError):
+    pass
+
+
+def check_cancelled(event):
+    if event is not None and event.is_set():
+        raise AICancelled('AI operation cancelled.')
+
+
+def parse_decision(content):
+    """Accept one JSON object with harmless formatting, never repair its data."""
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError('AI returned an empty response. Check the model and output limits.')
+    text = re.sub(r'<think>.*?</think>', '', content, flags=re.S).strip().lstrip('\ufeff')
+    fenced = re.search(r'```(?:json)?\s*([\s\S]*?)```', text, flags=re.I)
+    if fenced:
+        text = fenced[1].strip()
+    start = text.find('{')
+    try:
+        if start < 0:
+            raise ValueError()
+        value, end = json.JSONDecoder().raw_decode(text, start)
+        if not isinstance(value, dict) or '{' in text[end:] or '}' in text[end:]:
+            raise ValueError()
+        return value
+    except (ValueError, json.JSONDecodeError):
+        raise ValueError('AI returned malformed or incomplete JSON. Enable JSON mode for OpenAI-compatible servers; Ollama native requests it automatically. No changes applied.') from None
+
+
 class CompatibleAI:
     def __init__(self, base_url, model, api_key='', json_mode=False, protocol='openai'):
         parsed = urlsplit(base_url.strip())
@@ -109,11 +138,10 @@ class CompatibleAI:
     def complete(self, payload, system=SYSTEM):
         body = {'model': self.model, 'messages': [{'role': 'system', 'content': system},
                 {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}], 'stream': False}
-        if self.json_mode:
-            if self.protocol == 'ollama':
-                body['format'] = 'json'
-            else:
-                body['response_format'] = {'type': 'json_object'}
+        if self.protocol == 'ollama':
+            body['format'] = 'json'
+        elif self.json_mode:
+            body['response_format'] = {'type': 'json_object'}
         headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
         if self.key:
             headers['Authorization'] = 'Bearer ' + self.key
@@ -125,15 +153,13 @@ class CompatibleAI:
                 raise ValueError('AI response is too large.')
             envelope = json.loads(raw)
             content = envelope['message']['content'] if self.protocol == 'ollama' else envelope['choices'][0]['message']['content']
-            if content.startswith('```'):
-                content = content.split('\n', 1)[1].rsplit('```', 1)[0]
-            return json.loads(content)
+            return parse_decision(content)
         except HTTPError as error:
             raise ValueError(f'AI endpoint returned HTTP {error.code}. Check base URL, model, key and JSON-mode support.') from None
         except (URLError, TimeoutError, OSError):
             raise ValueError('AI endpoint is unreachable or timed out.') from None
         except (KeyError, IndexError, TypeError, AttributeError, json.JSONDecodeError):
-            raise ValueError('AI endpoint did not return a valid Chat Completions JSON decision.') from None
+            raise ValueError('AI endpoint returned an invalid API response envelope. Check the selected protocol and base URL.') from None
 
 
 def validate_decisions(data, row_ids, catalog):
@@ -164,7 +190,8 @@ def validate_decisions(data, row_ids, catalog):
     return proposals
 
 
-def analyze(lines, inventory, config, ai, boards=1, exclusions=None):
+def analyze(lines, inventory, config, ai, boards=1, exclusions=None, cancel_event=None):
+    check_cancelled(cancel_event)
     pending = [(i, line) for i, line in enumerate(lines)
                if not identity(line, config) and i not in (exclusions or {})]
     if not pending:
@@ -175,6 +202,7 @@ def analyze(lines, inventory, config, ai, boards=1, exclusions=None):
         raise ValueError('AI assistance currently supports up to 1000 eligible inventory parts.')
     compact = []
     for part in catalog.values():
+        check_cancelled(cancel_event)
         try:
             available = str(inventory.available(part['pk']))
         except Exception:
@@ -189,12 +217,14 @@ def analyze(lines, inventory, config, ai, boards=1, exclusions=None):
                         'unallocated_stock': available})
     proposals = []
     for start in range(0, len(pending), 3):
+        check_cancelled(cancel_event)
         batch = pending[start:start + 3]
         rows = [{'row_id': i, 'references': line.refs, 'value': line.value, 'footprint': line.footprint,
                  'fields': line.fields, 'normalized_value': normalized_value(line), 'required_quantity': line.quantity * boards, 'locked': identity(line, config) is not None}
                 for i, line in batch]
         selected = {part['part_id']: part for _, line in batch for part in shortlist(line, compact)}
         data = ai.complete({'bom': rows, 'boards_to_assemble': boards, 'inventory': list(selected.values())})
+        check_cancelled(cancel_event)
         decisions = validate_decisions(data, {r['row_id'] for r in rows}, catalog)
         for proposal in decisions:
             if identity(lines[proposal.row_id], config) and proposal.action != 'keep':

@@ -10,7 +10,7 @@ from pathlib import Path
 import wx
 
 from ..checker import check, identity, usable
-from ..ai import CompatibleAI, analyze, apply_proposals
+from ..ai import CompatibleAI, analyze, apply_proposals, check_cancelled
 from ..mouser import Mouser, prepare_cart
 from ..inputs import read_bom
 from ..inventree import InvenTree
@@ -146,6 +146,7 @@ class CheckerDialog(wx.Dialog):
             self.credential_error = str(error)
         self.results = None
         self.busy = False
+        self.ai_cancel_event = None
         layout = wx.BoxSizer(wx.VERTICAL)
         self.source_label = wx.StaticText(self, label='Source: ' + self.source)
         layout.Add(self.source_label, 0, wx.EXPAND | wx.ALL, 12)
@@ -192,12 +193,16 @@ class CheckerDialog(wx.Dialog):
         layout.Add(self.status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
         activity = wx.BoxSizer(wx.HORIZONTAL)
         self.activity_bar = wx.Gauge(self, range=100, size=(-1, 16))
-        self.activity_text = wx.StaticText(self, label='Working… 0:00 elapsed')
-        activity.Add(self.activity_bar, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 12)
-        activity.Add(self.activity_text, 0, wx.ALIGN_CENTER_VERTICAL)
+        self.activity_text = wx.StaticText(self, label='Working… 0:00 elapsed', size=(290, -1), style=wx.ST_NO_AUTORESIZE)
+        self.cancel_activity = wx.Button(self, label='Cancel')
+        self.cancel_activity.Bind(wx.EVT_BUTTON, self.on_cancel_ai)
+        activity.Add(self.activity_bar, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT | wx.RESERVE_SPACE_EVEN_IF_HIDDEN, 12)
+        activity.Add(self.activity_text, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT | wx.RESERVE_SPACE_EVEN_IF_HIDDEN, 8)
+        activity.Add(self.cancel_activity, 0, wx.ALIGN_CENTER_VERTICAL | wx.RESERVE_SPACE_EVEN_IF_HIDDEN)
         layout.Add(activity, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
         self.activity_bar.Hide()
         self.activity_text.Hide()
+        self.cancel_activity.Hide()
         self.activity_timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_activity, self.activity_timer)
         layout.Add(self.CreateButtonSizer(wx.CLOSE), 0, wx.EXPAND | wx.ALL, 12)
@@ -307,8 +312,10 @@ class CheckerDialog(wx.Dialog):
             raise ValueError('Enter an InvenTree API token under Settings → InvenTree first.')
         return InvenTree(config['url'], self.inventory_token)
 
-    def set_busy(self, busy, operation='Working'):
+    def set_busy(self, busy, operation='Working', cancellable=False):
         self.busy = busy
+        self.ai_cancel_event = threading.Event() if busy and cancellable else None
+        self.cancel_activity.Show(busy and cancellable)
         if busy:
             self.activity_operation = operation
             self.activity_started = time.monotonic()
@@ -325,6 +332,13 @@ class CheckerDialog(wx.Dialog):
             control.Enable(not busy)
         self.export.Enable(not busy and self.results is not None)
         self.build_button.Enable(not busy and bool(self.results) and all(r.status in ('OK', 'OK_EQUIVALENT', 'EXCLUDED_AI') for r in self.results))
+
+    def on_cancel_ai(self, event=None):
+        if self.ai_cancel_event is None:
+            return
+        self.ai_cancel_event.set()
+        self.set_busy(False)
+        self.status.SetLabel('AI operation cancelled. No proposals applied. An in-flight server request may finish; its result will be discarded.')
 
     def on_activity(self, event=None):
         if self.closed or not self.busy:
@@ -517,17 +531,22 @@ class CheckerDialog(wx.Dialog):
         except Exception as error:
             wx.MessageBox(str(error), 'Cannot start AI Assist', wx.OK | wx.ICON_ERROR)
             return
-        self.set_busy(True, 'AI Assist')
+        self.set_busy(True, 'AI Assist', cancellable=True)
+        cancel_event = self.ai_cancel_event
+        lines, exclusions = copy.deepcopy(self.lines), dict(self.exclusions)
         self.status.SetLabel('AI Assist is reviewing unassociated rows only. Existing associations are preserved.')
         def operation():
-            proposals, catalog = analyze(self.lines, inventory, config, ai, boards, self.exclusions)
+            proposals, catalog = analyze(lines, inventory, config, ai, boards, exclusions, cancel_event)
             for pk in {p.part_id for p in proposals if p.action == 'match'}:
+                check_cancelled(cancel_event)
                 try:
                     catalog[pk]['_available'] = str(inventory.available(pk))
                 except Exception:
                     catalog[pk]['_available'] = 'Unknown'
             return proposals, catalog
         def done(value, error):
+            if cancel_event.is_set():
+                return
             self.set_busy(False)
             if error:
                 self.status.SetLabel('AI Assist failed. No AI changes applied.')
@@ -572,9 +591,13 @@ class CheckerDialog(wx.Dialog):
         except Exception as error:
             wx.MessageBox(str(error), 'Cannot prepare Mouser cart', wx.OK | wx.ICON_ERROR)
             return
-        self.set_busy(True, 'Preparing Mouser cart')
+        self.set_busy(True, 'Preparing Mouser cart', cancellable=True)
+        cancel_event = self.ai_cancel_event
+        lines, exclusions = copy.deepcopy(self.lines), dict(self.exclusions)
         self.status.SetLabel('Searching Mouser and asking the configured AI to select verified candidates. No cart has been created yet.')
         def done(rows, error):
+            if cancel_event.is_set():
+                return
             self.set_busy(False)
             if error:
                 self.status.SetLabel('Mouser preparation failed. No cart was created.')
@@ -587,7 +610,7 @@ class CheckerDialog(wx.Dialog):
             finally:
                 dialog.closed = True
                 dialog.Destroy()
-        background(self, lambda: prepare_cart(self.lines, self.exclusions, boards, mouser, ai), done)
+        background(self, lambda: prepare_cart(lines, exclusions, boards, mouser, ai, cancel_event), done)
 
     def on_export(self, event):
         if not self.results:
@@ -624,6 +647,8 @@ class CheckerDialog(wx.Dialog):
 
     def on_close(self, event):
         self.closed = True
+        if self.ai_cancel_event is not None:
+            self.ai_cancel_event.set()
         self.activity_timer.Stop()
         self.inventory_token = ''
         self.mouser_key = ''

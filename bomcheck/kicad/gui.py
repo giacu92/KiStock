@@ -2,6 +2,7 @@
 import copy
 import os
 import threading
+import time
 import webbrowser
 from collections import Counter
 from pathlib import Path
@@ -179,6 +180,16 @@ class CheckerDialog(wx.Dialog):
         layout.Add(self.details, 0, wx.EXPAND | wx.ALL, 12)
         self.status = wx.StaticText(self, label='Read-only inventory check. No stock is reserved or changed.')
         layout.Add(self.status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        activity = wx.BoxSizer(wx.HORIZONTAL)
+        self.activity_bar = wx.Gauge(self, range=100, size=(-1, 16))
+        self.activity_text = wx.StaticText(self, label='Working… 0:00 elapsed')
+        activity.Add(self.activity_bar, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 12)
+        activity.Add(self.activity_text, 0, wx.ALIGN_CENTER_VERTICAL)
+        layout.Add(activity, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        self.activity_bar.Hide()
+        self.activity_text.Hide()
+        self.activity_timer = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self.on_activity, self.activity_timer)
         layout.Add(self.CreateButtonSizer(wx.CLOSE), 0, wx.EXPAND | wx.ALL, 12)
         self.SetSizer(layout)
         self.SetMinSize((900, 600))
@@ -287,10 +298,28 @@ class CheckerDialog(wx.Dialog):
 
     def set_busy(self, busy):
         self.busy = busy
+        if busy:
+            self.activity_started = time.monotonic()
+            self.activity_bar.Show()
+            self.activity_text.Show()
+            self.on_activity()
+            self.activity_timer.Start(150)
+        else:
+            self.activity_timer.Stop()
+            self.activity_bar.Hide()
+            self.activity_text.Hide()
+        self.Layout()
         for control in (self.run, self.import_button, self.associate, self.boards, self.settings_button, self.ai_button, self.reset_exclusions, self.mouser_button):
             control.Enable(not busy)
         self.export.Enable(not busy and self.results is not None)
         self.build_button.Enable(not busy and bool(self.results) and all(r.status in ('OK', 'OK_EQUIVALENT', 'EXCLUDED_AI') for r in self.results))
+
+    def on_activity(self, event=None):
+        if self.closed or not self.busy:
+            return
+        self.activity_bar.Pulse()
+        elapsed = int(time.monotonic() - self.activity_started)
+        self.activity_text.SetLabel(f'Working… {elapsed // 60}:{elapsed % 60:02d} elapsed')
 
     def on_check(self, event=None, automatic=False):
         if self.closed or self.busy:
@@ -526,6 +555,7 @@ class CheckerDialog(wx.Dialog):
 
     def on_close(self, event):
         self.closed = True
+        self.activity_timer.Stop()
         self.inventory_token = ''
         self.mouser_key = ''
         self.mouser_search_key = ''

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.4 — Visible background activity
+
+- Show an animated activity bar and elapsed time during AI Assist, Mouser preparation and availability checks.
+- Keep the current operation description visible; stop the indicator on completion, failure or closing.
+
 ## 0.5.3 — Tolerate irrelevant AI part IDs
 
 - Discard superfluous part IDs on keep/exclude actions instead of rejecting the whole AI response.

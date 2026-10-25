@@ -61,6 +61,14 @@ def main():
         root = Path(folder)
         dialog = CheckerDialog(None, lines, 'test.kicad_pcb', root / 'settings.json')
         assert __version__ in dialog.GetTitle()
+        assert not dialog.activity_bar.IsShown()
+        dialog.set_busy(True)
+        assert dialog.activity_bar.IsShown() and dialog.activity_timer.IsRunning()
+        with patch('bomcheck.kicad.gui.time.monotonic', return_value=dialog.activity_started + 65):
+            dialog.on_activity()
+        assert '1:05 elapsed' in dialog.activity_text.GetLabel()
+        dialog.set_busy(False)
+        assert not dialog.activity_bar.IsShown() and not dialog.activity_timer.IsRunning()
         dialog.inventory_token = 'test-token-never-persist'
         dialog.config['remember_token'] = True
         assert dialog.table.GetItemText(0) == 'ASSOCIATED'

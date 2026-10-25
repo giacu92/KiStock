@@ -90,6 +90,28 @@ class InvenTree:
     def suggestions(self, value):
         return self.list('part/', search=value, active='true')[:8] if value else []
 
+    def stock_locations(self, pk):
+        """Physical stock by location, separate from unallocated availability."""
+        totals = {}
+        for item in self.list('stock/', part=pk, in_stock='true', location_detail='true'):
+            try:
+                quantity = Decimal(str(item['quantity']))
+                if not quantity.is_finite() or quantity < 0:
+                    raise ValueError()
+            except (KeyError, InvalidOperation, ValueError):
+                raise ValueError('InvenTree returned an invalid stock-location quantity.') from None
+            if not quantity:
+                continue
+            location = item.get('location_detail') or {}
+            location_id = item.get('location')
+            if not location and location_id is not None:
+                if not str(location_id).isdigit():
+                    raise ValueError('InvenTree returned an invalid stock location ID.')
+                location = self.get(f'stock/location/{int(location_id)}/')
+            path = location.get('pathstring') or location.get('name') or 'Unassigned location'
+            totals[path] = totals.get(path, Decimal(0)) + quantity
+        return [{'path': path, 'quantity': totals[path]} for path in sorted(totals)]
+
     def post(self, path, payload):
         url = urljoin(self.api, path)
         if not url.startswith(self.api) or urlsplit(url).netloc != urlsplit(self.api).netloc:

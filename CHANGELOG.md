@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.8 — Stock locations in the part picker
+
+- Show the selected part's full warehouse location paths and physical quantities in the association window.
+- Combine stock lots at the same location; distinguish unassigned locations and unavailable location data.
+- Load locations in the background and ignore stale responses after changing selection.
+
 ## 0.5.7 — InvenTree-inspired plugin icon
 
 - Replace the chip icon with a sand-colored hexagonal box, blue cube and green stock-check badge.

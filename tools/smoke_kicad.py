@@ -113,6 +113,27 @@ def main():
         assert picker.list.GetItemCount() == 5
         assert picker.list.GetItemText(0, 3) == '1'
         assert picker.list.GetItemText(4, 3) == '0'
+        inv.stock_locations = MagicMock(return_value=[{'path': 'Room / Box 2', 'quantity': 2}, {'path': 'Room / Drawer 1', 'quantity': 5}])
+        selected_event = MagicMock()
+        selected_event.GetIndex.return_value = 0
+        with patch('bomcheck.kicad.gui.background', side_effect=immediate):
+            picker.on_part_selection(selected_event)
+        assert 'Room / Box 2 — 2 units' in picker.locations.GetValue()
+        assert 'Room / Drawer 1 — 5 units' in picker.locations.GetValue()
+        with patch('bomcheck.kicad.gui.background') as delayed_locations:
+            picker.on_part_selection(selected_event)
+            old_location_done = delayed_locations.call_args.args[2]
+            selected_event.GetIndex.return_value = 1
+            picker.on_part_selection(selected_event)
+            new_location_done = delayed_locations.call_args.args[2]
+            new_location_done([], None)
+            old_location_done([{'path': 'Wrong old selection', 'quantity': 99}], None)
+        assert picker.locations.GetValue() == 'No physical stock locations found.'
+        with patch('bomcheck.kicad.gui.background', side_effect=immediate):
+            inv.stock_locations.side_effect = ValueError('Read permission denied')
+            picker.on_part_selection(selected_event)
+        assert 'Locations unavailable' in picker.locations.GetValue()
+        assert picker.FindWindowById(wx.ID_OK).IsEnabled()
         picker.closed = True
         picker.Destroy()
         # A failed stock lookup must remain Unknown rather than becoming zero.

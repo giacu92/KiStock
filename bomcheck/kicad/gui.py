@@ -39,6 +39,7 @@ class PartPicker(wx.Dialog):
         self.closed, self.parts, self.selected = False, [], None
         self.client = client
         self.filters = filters or {}
+        self.location_request = 0
         layout = wx.BoxSizer(wx.VERTICAL)
         layout.Add(wx.StaticText(self, label=f'{line.refs}  |  {line.value}  |  {line.footprint}'), 0, wx.ALL, 12)
         layout.Add(wx.StaticText(self, label='Choose an exact part. Check package, ratings and tolerance before associating.'), 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
@@ -52,6 +53,9 @@ class PartPicker(wx.Dialog):
         for col, width in [('ID', 60), ('IPN', 150), ('Name', 245), ('Available (unallocated)', 155), ('Description', 300)]:
             self.list.AppendColumn(col, width=width)
         layout.Add(self.list, 1, wx.EXPAND | wx.ALL, 12)
+        layout.Add(wx.StaticText(self, label='Stock locations — physical quantities (may include allocated stock)'), 0, wx.LEFT | wx.RIGHT, 12)
+        self.locations = wx.TextCtrl(self, value='Select a part to see where it is stored.', style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 65))
+        layout.Add(self.locations, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
         self.status = wx.StaticText(self, label='Enter a search term, then select a result.')
         layout.Add(self.status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
         self.remove_association = wx.Button(self, label='Remove current association')
@@ -66,7 +70,7 @@ class PartPicker(wx.Dialog):
         self.FindWindowById(wx.ID_OK).Disable()
         self.search.Bind(wx.EVT_BUTTON, self.on_search)
         self.query.Bind(wx.EVT_TEXT_ENTER, self.on_search)
-        self.list.Bind(wx.EVT_LIST_ITEM_SELECTED, lambda event: self.FindWindowById(wx.ID_OK).Enable())
+        self.list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_part_selection)
         self.Bind(wx.EVT_BUTTON, self.on_accept, id=wx.ID_OK)
         self.Bind(wx.EVT_CLOSE, self.on_close)
         wx.CallAfter(self.on_search)
@@ -80,6 +84,8 @@ class PartPicker(wx.Dialog):
         self.search.Disable()
         self.FindWindowById(wx.ID_OK).Disable()
         self.list.DeleteAllItems()
+        self.location_request += 1
+        self.locations.SetValue('Select a part to see where it is stored.')
         self.status.SetLabel('Searching…')
         def done(parts, error):
             if error:
@@ -110,6 +116,25 @@ class PartPicker(wx.Dialog):
                 self.status.SetLabel(f'{len(self.parts)} eligible parts. Available means unallocated stock; Unknown means the stock request failed.')
             background(self, load_stock, show_stock)
         background(self, lambda: self.client.list('part/', search=query, active='true', **self.filters), done)
+
+    def on_part_selection(self, event):
+        index = event.GetIndex()
+        if not 0 <= index < len(self.parts):
+            return
+        self.FindWindowById(wx.ID_OK).Enable()
+        self.location_request += 1
+        request = self.location_request
+        pk = self.parts[index]['pk']
+        self.locations.SetValue('Loading stock locations…')
+        def done(locations, error):
+            if request != self.location_request:
+                return
+            if error:
+                self.locations.SetValue('Locations unavailable: ' + error)
+            else:
+                self.locations.SetValue('\n'.join(f'{item["path"]} — {item["quantity"]} units' for item in locations)
+                                        or 'No physical stock locations found.')
+        background(self, lambda: self.client.stock_locations(pk), done)
 
     def on_accept(self, event):
         index = self.list.GetFirstSelected()

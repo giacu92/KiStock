@@ -130,6 +130,24 @@ class InputTests(unittest.TestCase):
 
 
 class ApiTests(unittest.TestCase):
+    def test_stock_locations_group_lots_and_keep_full_paths(self):
+        client = InvenTree('http://inventory.test', 'secret')
+        lots = [{'quantity': 2, 'location_detail': {'pathstring': 'Room / Box 2'}},
+                {'quantity': '3.5', 'location_detail': {'pathstring': 'Room / Box 2'}},
+                {'quantity': 7, 'location': 4}, {'quantity': 1, 'location': None},
+                {'quantity': 0, 'location_detail': {'name': 'Empty'}}]
+        with patch.object(client, 'list', return_value=lots) as request, \
+             patch.object(client, 'get', return_value={'pathstring': 'Room / Drawer 4'}) as fallback:
+            locations = client.stock_locations(17)
+        request.assert_called_once_with('stock/', part=17, in_stock='true', location_detail='true')
+        fallback.assert_called_once_with('stock/location/4/')
+        self.assertEqual(locations, [{'path': 'Room / Box 2', 'quantity': Decimal('5.5')},
+                                    {'path': 'Room / Drawer 4', 'quantity': Decimal(7)},
+                                    {'path': 'Unassigned location', 'quantity': Decimal(1)}])
+        for quantity in ('NaN', 'unknown', -1):
+            with patch.object(client, 'list', return_value=[{'quantity': quantity}]), self.assertRaises(ValueError):
+                client.stock_locations(17)
+
     def test_mpn_exact_and_same_part_deduplicated(self):
         client = InvenTree('http://inventory.test', 'secret')
         matches = [{'MPN': 'ABC', 'part': 1}, {'MPN': 'ABC', 'part': 1}, {'MPN': 'ABCD', 'part': 2}]
